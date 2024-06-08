@@ -4,8 +4,20 @@ mod misc;
 mod transfer_agent;
 mod writer;
 
+use clap::Parser;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+
+#[derive(Debug, Parser)]
+struct Opts {
+    #[clap(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Parser)]
+enum Command {
+    TransferAgent(transfer_agent::Opts),
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -13,5 +25,8 @@ async fn main() -> anyhow::Result<()> {
         tracing_subscriber::registry().with(layer).init();
     }
 
-    transfer_agent::main().await
+    let opts = Opts::parse();
+    match opts.command {
+        Command::TransferAgent(opts) => transfer_agent::main(opts).await,
+    }
 }

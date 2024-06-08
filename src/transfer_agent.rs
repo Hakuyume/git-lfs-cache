@@ -1,4 +1,5 @@
 use crate::{git, git_lfs, misc, writer};
+use clap::Parser;
 use futures::{TryFutureExt, TryStreamExt};
 use http::{HeaderMap, Request, StatusCode, Uri};
 use http_body_util::{BodyExt, Empty};
@@ -9,7 +10,10 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-pub async fn main() -> anyhow::Result<()> {
+#[derive(Debug, Parser)]
+pub struct Opts {}
+
+pub async fn main(_: Opts) -> anyhow::Result<()> {
     let client = misc::client()?;
 
     let stdin = io::stdin();
