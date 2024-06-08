@@ -8,7 +8,7 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 #[tracing::instrument(err, ret)]
-pub(crate) async fn config_get_urlmatch(key: &str, url: &Uri) -> anyhow::Result<Vec<String>> {
+pub async fn config_get_urlmatch(key: &str, url: &Uri) -> anyhow::Result<Vec<String>> {
     let output = Command::new("git")
         .arg("config")
         .arg("--get-urlmatch")
@@ -30,13 +30,13 @@ pub(crate) async fn config_get_urlmatch(key: &str, url: &Uri) -> anyhow::Result<
 }
 
 #[derive(Debug)]
-pub(crate) struct Credential {
-    pub(crate) username: Option<String>,
-    pub(crate) password: Option<Secret<String>>,
+pub struct Credential {
+    pub username: Option<String>,
+    pub password: Option<Secret<String>>,
 }
 
 #[tracing::instrument(err, ret)]
-pub(crate) async fn credential_fill(url: &Uri) -> anyhow::Result<Credential> {
+pub async fn credential_fill(url: &Uri) -> anyhow::Result<Credential> {
     // https://git-scm.com/docs/git-credential#IOFMT
     let inputs = url
         .scheme_str()
@@ -88,7 +88,7 @@ pub(crate) async fn credential_fill(url: &Uri) -> anyhow::Result<Credential> {
 }
 
 #[tracing::instrument(err, ret(Display))]
-pub(crate) async fn remote_get_url(remote: &str) -> anyhow::Result<Uri> {
+pub async fn remote_get_url(remote: &str) -> anyhow::Result<Uri> {
     let output = Command::new("git")
         .arg("remote")
         .arg("get-url")
@@ -106,7 +106,7 @@ pub(crate) async fn remote_get_url(remote: &str) -> anyhow::Result<Uri> {
 }
 
 #[tracing::instrument(err, ret)]
-pub(crate) async fn rev_parse_git_dir() -> anyhow::Result<PathBuf> {
+pub async fn rev_parse_git_dir() -> anyhow::Result<PathBuf> {
     let output = Command::new("git")
         .arg("rev-parse")
         .arg("--git-dir")

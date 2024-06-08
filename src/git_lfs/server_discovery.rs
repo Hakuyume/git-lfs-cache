@@ -7,7 +7,7 @@ use http::{HeaderMap, HeaderName, HeaderValue, Uri};
 use secrecy::ExposeSecret;
 
 #[tracing::instrument(err, ret)]
-pub(crate) async fn server_discovery(url: &Uri, operation: Operation) -> anyhow::Result<Response> {
+pub async fn server_discovery(url: &Uri, operation: Operation) -> anyhow::Result<Response> {
     match url.scheme_str() {
         Some("http") | Some("https") => {
             let href = misc::patch_path(url.clone(), |path| {
@@ -42,7 +42,7 @@ pub(crate) async fn server_discovery(url: &Uri, operation: Operation) -> anyhow:
 }
 
 #[derive(Debug)]
-pub(crate) struct Response {
-    pub(crate) href: Uri,
-    pub(crate) header: HeaderMap,
+pub struct Response {
+    pub href: Uri,
+    pub header: HeaderMap,
 }

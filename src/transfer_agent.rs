@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-pub(crate) async fn main() -> anyhow::Result<()> {
+pub async fn main() -> anyhow::Result<()> {
     let client = misc::client()?;
 
     let stdin = io::stdin();

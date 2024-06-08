@@ -7,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-pub(crate) async fn new_in<P>(dir: P) -> Result<Writer, io::Error>
+pub async fn new_in<P>(dir: P) -> Result<Writer, io::Error>
 where
     P: AsRef<Path>,
 {
@@ -23,27 +23,27 @@ where
     })
 }
 
-pub(crate) struct Writer {
+pub struct Writer {
     path: Option<PathBuf>,
     writer: BufWriter<File>,
     state: watch::Sender<(u64, bool)>,
 }
 
 impl Writer {
-    pub(crate) async fn write(&mut self, data: &[u8]) -> Result<(), io::Error> {
+    pub async fn write(&mut self, data: &[u8]) -> Result<(), io::Error> {
         self.writer.write_all(data).await?;
         self.state
             .send_modify(|(size, _)| *size += data.len() as u64);
         Ok(())
     }
 
-    pub(crate) async fn finish(mut self) -> Result<PathBuf, io::Error> {
+    pub async fn finish(mut self) -> Result<PathBuf, io::Error> {
         self.writer.flush().await?;
         self.state.send_modify(|(_, eof)| *eof = true);
         Ok(self.path.take().unwrap())
     }
 
-    pub(crate) async fn subscribe(
+    pub async fn subscribe(
         &self,
     ) -> Result<impl Stream<Item = Result<Bytes, io::Error>> + Send + Sync + 'static, io::Error>
     {

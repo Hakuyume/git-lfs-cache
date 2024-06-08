@@ -7,7 +7,7 @@ use http_body_util::{BodyExt, Full};
 use serde::{Deserialize, Serialize};
 
 #[tracing::instrument(err, ret)]
-pub(crate) async fn batch(
+pub async fn batch(
     client: &misc::Client,
     href: &Uri,
     header: &HeaderMap,
@@ -47,49 +47,49 @@ pub(crate) async fn batch(
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct Request<'a> {
-    pub(crate) operation: Operation,
-    pub(crate) transfers: &'a [request::Transfer],
-    pub(crate) objects: &'a [request::Object<'a>],
+pub struct Request<'a> {
+    pub operation: Operation,
+    pub transfers: &'a [request::Transfer],
+    pub objects: &'a [request::Object<'a>],
 }
 
-pub(crate) mod request {
+pub mod request {
     use serde::Serialize;
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "lowercase")]
-    pub(crate) enum Transfer {
+    pub enum Transfer {
         Basic,
     }
 
     #[derive(Debug, Serialize)]
-    pub(crate) struct Object<'a> {
-        pub(crate) oid: &'a str,
-        pub(crate) size: u64,
+    pub struct Object<'a> {
+        pub oid: &'a str,
+        pub size: u64,
     }
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct Response {
-    pub(crate) objects: Vec<response::Object>,
+pub struct Response {
+    pub objects: Vec<response::Object>,
 }
 
-pub(crate) mod response {
+pub mod response {
     use super::super::Error;
     use http::{HeaderMap, Uri};
     use serde::Deserialize;
 
     #[derive(Debug, Deserialize)]
-    pub(crate) struct Object {
-        pub(crate) oid: String,
-        pub(crate) size: u64,
+    pub struct Object {
+        pub oid: String,
+        pub size: u64,
         #[serde(flatten)]
-        pub(crate) inner: Inner,
+        pub inner: Inner,
     }
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "lowercase")]
-    pub(crate) enum Inner {
+    pub enum Inner {
         Actions {
             upload: Option<Action>,
             verify: Option<Action>,
@@ -99,10 +99,10 @@ pub(crate) mod response {
     }
 
     #[derive(Debug, Deserialize)]
-    pub(crate) struct Action {
+    pub struct Action {
         #[serde(default, with = "http_serde::uri")]
-        pub(crate) href: Uri,
+        pub href: Uri,
         #[serde(default, with = "http_serde::header_map")]
-        pub(crate) header: HeaderMap,
+        pub header: HeaderMap,
     }
 }

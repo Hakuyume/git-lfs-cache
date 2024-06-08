@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase", tag = "event")]
-pub(crate) enum Request {
+pub enum Request {
     Init {
         operation: Operation,
         remote: String,
@@ -26,14 +26,14 @@ pub(crate) enum Request {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct InitResponse {
+pub struct InitResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) error: Option<Error>,
+    pub error: Option<Error>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase", tag = "event")]
-pub(crate) enum Response<'a> {
+pub enum Response<'a> {
     Complete {
         oid: &'a str,
         #[serde(skip_serializing_if = "Option::is_none")]
