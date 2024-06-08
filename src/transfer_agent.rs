@@ -8,6 +8,7 @@ use std::fmt::Debug;
 use std::future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use tokio::fs;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Debug, Parser)]
@@ -135,6 +136,9 @@ async fn download(
     let context = context
         .as_ref()
         .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
+    let temp_dir = context.git_dir.join("lfs").join("tmp");
+    fs::create_dir_all(&temp_dir).await?;
+
     let response = git_lfs::batch(
         client,
         &context.href,
@@ -167,7 +171,7 @@ async fn download(
             let response = client.request(request).await?;
             let (parts, mut body) = response.into_parts();
             if parts.status.is_success() {
-                let mut writer = writer::new_in(context.git_dir.join("lfs").join("tmp")).await?;
+                let mut writer = writer::new_in(&temp_dir).await?;
                 while let Some(frame) = body.frame().await.transpose()? {
                     if let Ok(data) = frame.into_data() {
                         writer.write(&data).await?;

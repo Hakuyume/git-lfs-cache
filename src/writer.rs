@@ -1,30 +1,28 @@
 use bytes::Bytes;
 use futures::Stream;
+use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
-use tokio::fs::{self, File};
+use tempfile::NamedTempFile;
+use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::watch;
-use uuid::Uuid;
 
 pub async fn new_in<P>(dir: P) -> Result<Writer, io::Error>
 where
     P: AsRef<Path>,
 {
-    let path = dir.as_ref().join(Uuid::new_v4().to_string());
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-    let writer = BufWriter::new(File::create(&path).await?);
+    let temp = NamedTempFile::new_in(dir)?;
+    let writer = BufWriter::new(File::from_std(temp.reopen()?));
     Ok(Writer {
-        path: Some(path),
+        temp,
         writer,
         state: watch::Sender::new((0, false)),
     })
 }
 
 pub struct Writer {
-    path: Option<PathBuf>,
+    temp: NamedTempFile,
     writer: BufWriter<File>,
     state: watch::Sender<(u64, bool)>,
 }
@@ -40,22 +38,22 @@ impl Writer {
     pub async fn finish(mut self) -> Result<PathBuf, io::Error> {
         self.writer.flush().await?;
         self.state.send_modify(|(_, eof)| *eof = true);
-        Ok(self.path.take().unwrap())
+        Ok(self.temp.keep()?.1)
     }
 
     pub async fn subscribe(
         &self,
     ) -> Result<impl Stream<Item = Result<Bytes, io::Error>> + Send + Sync + 'static, io::Error>
     {
-        let reader = BufReader::new(File::open(self.path.as_ref().unwrap()).await?);
+        let reader = BufReader::new(File::from_std(self.temp.reopen()?));
         Ok(futures::stream::try_unfold(
             (reader, self.state.subscribe(), 0),
-            |(mut reader, mut state, mut position)| async move {
+            |(mut reader, mut state, mut pos)| async move {
                 let (size, eof) = *state
-                    .wait_for(|(size, eof)| *size > position || *eof)
+                    .wait_for(|(size, eof)| *size > pos || *eof)
                     .await
                     .map_err(|_| io::ErrorKind::BrokenPipe)?;
-                if position < size {
+                if pos < size {
                     loop {
                         let data = reader.fill_buf().await?;
                         if data.is_empty() {
@@ -66,8 +64,8 @@ impl Writer {
                         } else {
                             let data = Bytes::copy_from_slice(data);
                             reader.consume(data.len());
-                            position += data.len() as u64;
-                            break Ok(Some((data, (reader, state, position))));
+                            pos += data.len() as u64;
+                            break Ok(Some((data, (reader, state, pos))));
                         }
                     }
                 } else {
@@ -79,11 +77,11 @@ impl Writer {
     }
 }
 
-impl Drop for Writer {
-    fn drop(&mut self) {
-        if let Some(path) = self.path.take() {
-            let _ = std::fs::remove_file(path);
-        }
+impl fmt::Debug for Writer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Writer")
+            .field("path", &self.temp.path())
+            .finish()
     }
 }
 
@@ -97,11 +95,11 @@ mod tests {
     use std::cmp;
     use tokio::fs;
 
-    async fn collect<S, E>(stream: S) -> Result<Bytes, E>
+    async fn collect<B, E>(body: B) -> Result<Bytes, E>
     where
-        S: Stream<Item = Result<Bytes, E>>,
+        B: Stream<Item = Result<Bytes, E>>,
     {
-        Ok(StreamBody::new(stream.map_ok(Frame::data))
+        Ok(StreamBody::new(body.map_ok(Frame::data))
             .collect()
             .await?
             .to_bytes())
@@ -155,27 +153,27 @@ mod tests {
     async fn test_large() -> anyhow::Result<()> {
         let mut rng = rand::thread_rng();
 
-        let mut data = vec![0; 1 << 24];
-        rng.fill(&mut data[..]);
+        let mut body = vec![0; 1 << 24];
+        rng.fill(&mut body[..]);
 
         let temp_dir = tempfile::tempdir()?;
         let mut writer = super::new_in(temp_dir.path()).await?;
 
         let subscribe_0 = tokio::spawn(collect(writer.subscribe().await?));
 
-        let mut position = 0;
-        while position < data.len() {
-            let size = cmp::min(rng.gen_range(1..1 << 16), data.len() - position);
-            writer.write(&data[position..position + size]).await?;
-            position += size;
+        let mut pos = 0;
+        while pos < body.len() {
+            let size = cmp::min(rng.gen_range(1..1 << 16), body.len() - pos);
+            writer.write(&body[pos..pos + size]).await?;
+            pos += size;
         }
 
         let subscribe_1 = tokio::spawn(collect(writer.subscribe().await?));
         let path = writer.finish().await?;
 
-        anyhow::ensure!(fs::read(&path).await? == data);
-        anyhow::ensure!(subscribe_0.await?? == data);
-        anyhow::ensure!(subscribe_1.await?? == data);
+        anyhow::ensure!(fs::read(&path).await? == body);
+        anyhow::ensure!(subscribe_0.await?? == body);
+        anyhow::ensure!(subscribe_1.await?? == body);
 
         Ok(())
     }
