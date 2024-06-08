@@ -1,0 +1,185 @@
+use crate::{git_lfs, misc, writer};
+use bytes::Bytes;
+use futures::{Stream, TryStreamExt};
+use http::header;
+use http::Request;
+use http_body::Frame;
+use http_body_util::StreamBody;
+use http_body_util::{BodyExt, Empty};
+use serde::Deserialize;
+use std::env;
+use std::fmt;
+use std::path::PathBuf;
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Opts {
+    bucket: String,
+    prefix: Option<String>,
+}
+
+pub struct Cache {
+    client: misc::Client,
+    authenticator: yup_oauth2::authenticator::DefaultAuthenticator,
+    bucket: String,
+    prefix: Option<String>,
+}
+
+impl fmt::Debug for Cache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GoogleCloudStorage")
+            .field("bucket", &self.bucket)
+            .field("prefix", &self.prefix)
+            .finish()
+    }
+}
+
+impl Cache {
+    pub async fn new(opts: Opts) -> anyhow::Result<Self> {
+        let client = misc::client()?;
+
+        let authenticator = if let Ok(path) = env::var("GOOGLE_APPLICATION_CREDENTIALS") {
+            if let Ok(secret) = yup_oauth2::read_authorized_user_secret(&path).await {
+                yup_oauth2::AuthorizedUserAuthenticator::builder(secret)
+                    .build()
+                    .await?
+            } else if let Ok(secret) = yup_oauth2::read_external_account_secret(&path).await {
+                yup_oauth2::ExternalAccountAuthenticator::builder(secret)
+                    .build()
+                    .await?
+            } else {
+                anyhow::bail!("unknown credentials type")
+            }
+        } else {
+            // https://cloud.google.com/compute/docs/access/create-enable-service-accounts-for-instances#applications
+            let request = Request::get(concat!(
+                "http://metadata.google.internal/computeMetadata/v1",
+                "/instance/service-accounts/default/token",
+            ))
+            .header("Metadata-Flavor", "Google")
+            .body(Empty::new().map_err(Box::from).boxed_unsync())?;
+            let response = client.request(request).await?;
+            let (parts, body) = response.into_parts();
+            let body = body.collect().await?.to_bytes();
+            let access_token = if parts.status.is_success() {
+                #[derive(Deserialize)]
+                struct B {
+                    access_token: String,
+                }
+
+                let B { access_token } = serde_json::from_slice(&body)?;
+                Ok(access_token)
+            } else {
+                Err(git_lfs::Error {
+                    code: parts.status,
+                    message: format!("{body:?}"),
+                })
+            }?;
+
+            yup_oauth2::AccessTokenAuthenticator::builder(access_token)
+                .build()
+                .await?
+        };
+
+        Ok(Self {
+            client: misc::client()?,
+            authenticator,
+            bucket: opts.bucket,
+            prefix: opts.prefix,
+        })
+    }
+
+    #[tracing::instrument(err, ret)]
+    pub async fn get(
+        &self,
+        oid: &str,
+        size: u64,
+        mut writer: writer::Writer,
+    ) -> anyhow::Result<PathBuf> {
+        // https://cloud.google.com/storage/docs/json_api/v1/objects/get
+        let builder = Request::get(format!(
+            "https://storage.googleapis.com/storage/v1/b/{}/o/{}?alt=media",
+            self.bucket,
+            urlencoding::encode(&self.name(oid)),
+        ));
+        let builder = self.authorization(builder).await?;
+        let request = builder.body(Empty::new().map_err(Box::from).boxed_unsync())?;
+        let response = self.client.request(request).await?;
+        let (parts, mut body) = response.into_parts();
+        if parts.status.is_success() {
+            while let Some(frame) = body.frame().await.transpose()? {
+                if let Ok(data) = frame.into_data() {
+                    writer.write(&data).await?;
+                }
+            }
+            Ok(writer.finish().await?)
+        } else {
+            let body = body.collect().await?.to_bytes();
+            Err(git_lfs::Error {
+                code: parts.status,
+                message: format!("{body:?}"),
+            }
+            .into())
+        }
+    }
+
+    #[tracing::instrument(err, ret, skip(body))]
+    pub async fn put<B, E>(&self, oid: &str, size: u64, body: B) -> anyhow::Result<()>
+    where
+        B: Stream<Item = Result<Bytes, E>> + Send + Sync + 'static,
+        anyhow::Error: From<E>,
+    {
+        // https://cloud.google.com/storage/docs/json_api/v1/objects/insert
+        let builder = Request::post(format!(
+            "https://storage.googleapis.com/upload/storage/v1/b/{}/o?uploadType=media&name={}",
+            self.bucket,
+            urlencoding::encode(&self.name(oid)),
+        ))
+        .header(header::CONTENT_LENGTH, size);
+        let builder = self.authorization(builder).await?;
+        let request = builder.body(
+            BodyExt::map_err(StreamBody::new(body.map_ok(Frame::data)), |e| {
+                Box::from(anyhow::Error::from(e))
+            })
+            .boxed_unsync(),
+        )?;
+        let response = self.client.request(request).await?;
+        let (parts, body) = response.into_parts();
+        if parts.status.is_success() {
+            Ok(())
+        } else {
+            let body = body.collect().await?.to_bytes();
+            Err(git_lfs::Error {
+                code: parts.status,
+                message: format!("{body:?}"),
+            }
+            .into())
+        }
+    }
+
+    fn name(&self, oid: &str) -> String {
+        if let Some(prefix) = &self.prefix {
+            format!("{prefix}{oid}")
+        } else {
+            oid.to_string()
+        }
+    }
+
+    async fn authorization(
+        &self,
+        builder: http::request::Builder,
+    ) -> anyhow::Result<http::request::Builder> {
+        let token = self
+            .authenticator
+            .token(&["https://www.googleapis.com/auth/cloud-platform"])
+            .await?;
+        Ok(builder.header(
+            header::AUTHORIZATION,
+            format!(
+                "Bearer {}",
+                token
+                    .token()
+                    .ok_or_else(|| anyhow::format_err!("missing token"))?
+            ),
+        ))
+    }
+}

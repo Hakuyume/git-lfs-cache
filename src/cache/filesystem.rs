@@ -46,7 +46,7 @@ impl Cache {
     #[tracing::instrument(err, ret, skip(body))]
     pub async fn put<B, E>(&self, oid: &str, size: u64, body: B) -> anyhow::Result<()>
     where
-        B: Stream<Item = Result<Bytes, E>>,
+        B: Stream<Item = Result<Bytes, E>> + Send + Sync + 'static,
         anyhow::Error: From<E>,
     {
         let path = self.path(oid);
