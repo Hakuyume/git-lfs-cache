@@ -1,4 +1,4 @@
-use crate::{git, git_lfs, misc};
+use crate::{git, git_lfs, misc, writer};
 use futures::{TryFutureExt, TryStreamExt};
 use http::{HeaderMap, Request, StatusCode, Uri};
 use http_body_util::{BodyExt, Empty};
@@ -7,9 +7,7 @@ use std::fmt::Debug;
 use std::future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use tokio::fs::{self, File};
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
-use uuid::Uuid;
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 pub(crate) async fn main() -> anyhow::Result<()> {
     let client = misc::client()?;
@@ -165,22 +163,13 @@ async fn download(
             let response = client.request(request).await?;
             let (parts, mut body) = response.into_parts();
             if parts.status.is_success() {
-                let temp = context
-                    .git_dir
-                    .join("lfs")
-                    .join("tmp")
-                    .join(Uuid::new_v4().to_string());
-                if let Some(parent) = temp.parent() {
-                    fs::create_dir_all(parent).await?;
-                }
-                let mut writer = BufWriter::new(File::create(&temp).await?);
+                let mut writer = writer::new_in(context.git_dir.join("lfs").join("tmp")).await?;
                 while let Some(frame) = body.frame().await.transpose()? {
                     if let Ok(data) = frame.into_data() {
-                        writer.write_all(&data).await?;
+                        writer.write(&data).await?;
                     }
-                    writer.flush().await?;
                 }
-                Ok(temp)
+                Ok(writer.finish().await?)
             } else {
                 let body = body.collect().await?.to_bytes();
                 Err(git_lfs::Error {

@@ -2,6 +2,7 @@ mod git;
 mod git_lfs;
 mod misc;
 mod transfer_agent;
+mod writer;
 
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
