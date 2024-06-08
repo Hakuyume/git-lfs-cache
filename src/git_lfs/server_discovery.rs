@@ -41,7 +41,7 @@ pub async fn server_discovery(url: &Uri, operation: Operation) -> anyhow::Result
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Response {
     pub href: Uri,
     pub header: HeaderMap,

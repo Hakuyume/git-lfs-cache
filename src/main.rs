@@ -1,3 +1,4 @@
+mod cache;
 mod git;
 mod git_lfs;
 mod misc;
@@ -25,8 +26,13 @@ async fn main() -> anyhow::Result<()> {
         tracing_subscriber::registry().with(layer).init();
     }
 
-    let opts = Opts::parse();
-    match opts.command {
-        Command::TransferAgent(opts) => transfer_agent::main(opts).await,
+    match Opts::try_parse() {
+        Ok(opts) => match opts.command {
+            Command::TransferAgent(opts) => transfer_agent::main(opts).await,
+        },
+        Err(e) => {
+            tracing::error!(error = e.to_string());
+            Err(e.into())
+        }
     }
 }

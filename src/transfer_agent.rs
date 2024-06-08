@@ -1,21 +1,27 @@
-use crate::{git, git_lfs, misc, writer};
+use crate::{cache, git, git_lfs, misc, writer};
 use clap::Parser;
-use futures::{TryFutureExt, TryStreamExt};
-use http::{HeaderMap, Request, StatusCode, Uri};
+use futures::future::OptionFuture;
+use futures::{FutureExt, TryFutureExt, TryStreamExt};
+use http::{Request, StatusCode, Uri};
 use http_body_util::{BodyExt, Empty};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::fmt::Debug;
 use std::future;
 use std::path::PathBuf;
-use std::pin::Pin;
+use std::pin::{self, Pin};
+use std::sync::Arc;
 use tokio::fs;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-#[derive(Debug, Parser)]
-pub struct Opts {}
+#[derive(Clone, Debug, Parser)]
+pub struct Opts {
+    #[clap(long = "cache")]
+    cache: Option<cache::Opts>,
+}
 
-pub async fn main(_: Opts) -> anyhow::Result<()> {
-    let client = misc::client()?;
+pub async fn main(opts: Opts) -> anyhow::Result<()> {
+    let mut context = Context::new(opts).await?;
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -30,19 +36,12 @@ pub async fn main(_: Opts) -> anyhow::Result<()> {
     })
     .and_then(|line| future::ready(serde_json::from_str(&line)).err_into());
 
-    let mut context = None;
     while let Some(request) = requests.try_next().await? {
         match request {
             git_lfs::custom_transfers::Request::Init {
                 operation, remote, ..
             } => {
-                let error = match init(operation, &remote).await {
-                    Ok(v) => {
-                        context = Some(v);
-                        None
-                    }
-                    Err(e) => Some(error(e)),
-                };
+                let error = context.init(operation, &remote).await.err().map(error);
                 respond(
                     &mut stdout,
                     &git_lfs::custom_transfers::InitResponse { error },
@@ -61,7 +60,7 @@ pub async fn main(_: Opts) -> anyhow::Result<()> {
                 .await?
             }
             git_lfs::custom_transfers::Request::Download { oid, size } => {
-                let (path, error) = match download(&client, &context, &oid, size).await {
+                let (path, error) = match context.download(&oid, size).await {
                     Ok(v) => (Some(v), None),
                     Err(e) => (None, Some(error(e))),
                 };
@@ -80,13 +79,6 @@ pub async fn main(_: Opts) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-#[derive(Debug)]
-struct Context {
-    git_dir: PathBuf,
-    href: Uri,
-    header: HeaderMap,
 }
 
 fn error(e: anyhow::Error) -> git_lfs::Error {
@@ -110,86 +102,167 @@ where
     Ok(())
 }
 
-#[tracing::instrument(err, ret)]
-async fn init(operation: git_lfs::Operation, remote: &str) -> anyhow::Result<Context> {
-    let git_dir = git::rev_parse_git_dir().await?.canonicalize()?;
-    let url = if let Ok(url) = git::remote_get_url(remote).await {
-        url
-    } else {
-        remote.parse()?
-    };
-    let response = git_lfs::server_discovery(&url, operation).await?;
-    Ok(Context {
-        git_dir,
-        href: response.href,
-        header: response.header,
-    })
+#[derive(Debug)]
+struct Context {
+    client: misc::Client,
+    git_dir: PathBuf,
+    cache: Option<cache::Cache>,
+    operation: Option<git_lfs::Operation>,
+    url: Option<Uri>,
+    server_discovery: Option<Arc<git_lfs::server_discovery::Response>>,
 }
 
-#[tracing::instrument(err, ret)]
-async fn download(
-    client: &misc::Client,
-    context: &Option<Context>,
-    oid: &str,
-    size: u64,
-) -> anyhow::Result<PathBuf> {
-    let context = context
-        .as_ref()
-        .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
-    let temp_dir = context.git_dir.join("lfs").join("tmp");
-    fs::create_dir_all(&temp_dir).await?;
+impl Context {
+    #[tracing::instrument(err, ret)]
+    async fn new(opts: Opts) -> anyhow::Result<Self> {
+        let git_dir = git::rev_parse_git_dir().await?.canonicalize()?;
 
-    let response = git_lfs::batch(
-        client,
-        &context.href,
-        &context.header,
-        &git_lfs::batch::Request {
-            operation: git_lfs::Operation::Download,
-            transfers: &[git_lfs::batch::request::Transfer::Basic],
-            objects: &[git_lfs::batch::request::Object { oid, size }],
-        },
-    )
-    .await?;
-    let object = response
-        .objects
-        .into_iter()
-        .find(|object| object.oid == oid)
-        .ok_or_else(|| anyhow::format_err!("missing object"))?;
-    match object.inner {
-        git_lfs::batch::response::Inner::Actions {
-            download: Some(download),
-            ..
-        } => {
-            let builder = Request::get(download.href);
-            let builder = download
-                .header
-                .iter()
-                .fold(builder, |builder, (name, value)| {
-                    builder.header(name, value)
-                });
-            let request = builder.body(Empty::new().map_err(Box::from).boxed_unsync())?;
-            let response = client.request(request).await?;
-            let (parts, mut body) = response.into_parts();
-            if parts.status.is_success() {
-                let mut writer = writer::new_in(&temp_dir).await?;
-                while let Some(frame) = body.frame().await.transpose()? {
-                    if let Ok(data) = frame.into_data() {
-                        writer.write(&data).await?;
+        let cache = if let Some(opts) = opts.cache {
+            Some(cache::Cache::new(opts).await?)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            client: misc::client()?,
+            git_dir,
+            cache,
+            operation: None,
+            url: None,
+            server_discovery: None,
+        })
+    }
+
+    #[tracing::instrument(err, ret)]
+    async fn init(&mut self, operation: git_lfs::Operation, remote: &str) -> anyhow::Result<()> {
+        self.operation = Some(operation);
+        let url = if let Ok(url) = git::remote_get_url(remote).await {
+            url
+        } else {
+            remote.parse()?
+        };
+        self.url = Some(url);
+        Ok(())
+    }
+
+    async fn server_discovery(
+        &mut self,
+    ) -> anyhow::Result<Arc<git_lfs::server_discovery::Response>> {
+        if let Some(response) = self.server_discovery.clone() {
+            Ok(response)
+        } else {
+            let url = self
+                .url
+                .as_ref()
+                .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
+            let operation = self
+                .operation
+                .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
+            let response = git_lfs::server_discovery(url, operation).await?;
+            Ok(self.server_discovery.insert(Arc::new(response)).clone())
+        }
+    }
+
+    #[tracing::instrument(err, ret)]
+    async fn download(&mut self, oid: &str, size: u64) -> anyhow::Result<PathBuf> {
+        let temp_dir = self.git_dir.join("lfs").join("tmp");
+        fs::create_dir_all(&temp_dir).await?;
+
+        let path = if let Some(cache) = &self.cache {
+            let writer = writer::new_in(&temp_dir).await?;
+            let check = {
+                let body = writer.subscribe().await?;
+                async move {
+                    let mut hasher = Sha256::new();
+                    let mut body = pin::pin!(body);
+                    while let Some(data) = body.try_next().await? {
+                        hasher.update(data);
+                    }
+                    anyhow::ensure!(oid == hex::encode(hasher.finalize()));
+                    Ok(())
+                }
+            };
+            match futures::future::join(cache.get(oid, size, writer), check).await {
+                (Ok(path), Ok(_)) => Some(path),
+                (Ok(path), _) => {
+                    fs::remove_file(path).await?;
+                    None
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        if let Some(path) = path {
+            Ok(path)
+        } else {
+            let server_discovery = self.server_discovery().await?;
+            let response = git_lfs::batch(
+                &self.client,
+                &server_discovery.href,
+                &server_discovery.header,
+                &git_lfs::batch::Request {
+                    operation: git_lfs::Operation::Download,
+                    transfers: &[git_lfs::batch::request::Transfer::Basic],
+                    objects: &[git_lfs::batch::request::Object { oid, size }],
+                },
+            )
+            .await?;
+            let object = response
+                .objects
+                .into_iter()
+                .find(|object| object.oid == oid)
+                .ok_or_else(|| anyhow::format_err!("missing object"))?;
+            match object.inner {
+                git_lfs::batch::response::Inner::Actions {
+                    download: Some(download),
+                    ..
+                } => {
+                    let builder = Request::get(download.href);
+                    let builder = download
+                        .header
+                        .iter()
+                        .fold(builder, |builder, (name, value)| {
+                            builder.header(name, value)
+                        });
+                    let request = builder.body(Empty::new().map_err(Box::from).boxed_unsync())?;
+                    let response = self.client.request(request).await?;
+                    let (parts, mut body) = response.into_parts();
+                    if parts.status.is_success() {
+                        let mut writer = writer::new_in(&temp_dir).await?;
+                        let put = if let Some(cache) = &self.cache {
+                            Some(cache.put(oid, size, writer.subscribe().await?))
+                        } else {
+                            None
+                        };
+                        let (path, _) = futures::future::try_join(
+                            async {
+                                while let Some(frame) = body.frame().await.transpose()? {
+                                    if let Ok(data) = frame.into_data() {
+                                        writer.write(&data).await?;
+                                    }
+                                }
+                                Ok(writer.finish().await?)
+                            },
+                            OptionFuture::from(put).map(Option::transpose),
+                        )
+                        .await?;
+                        Ok(path)
+                    } else {
+                        let body = body.collect().await?.to_bytes();
+                        Err(git_lfs::Error {
+                            code: parts.status,
+                            message: format!("{body:?}"),
+                        }
+                        .into())
                     }
                 }
-                Ok(writer.finish().await?)
-            } else {
-                let body = body.collect().await?.to_bytes();
-                Err(git_lfs::Error {
-                    code: parts.status,
-                    message: format!("{body:?}"),
+                git_lfs::batch::response::Inner::Actions { download: None, .. } => {
+                    Err(anyhow::format_err!("missing action"))
                 }
-                .into())
+                git_lfs::batch::response::Inner::Error(e) => Err(e.into()),
             }
         }
-        git_lfs::batch::response::Inner::Actions { download: None, .. } => {
-            Err(anyhow::format_err!("missing action"))
-        }
-        git_lfs::batch::response::Inner::Error(e) => Err(e.into()),
     }
 }
