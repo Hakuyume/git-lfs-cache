@@ -44,7 +44,7 @@ pub enum Response<'a> {
     #[serde(rename_all = "camelCase")]
     Progress {
         oid: &'a str,
-        bytes_so_far: usize,
-        bytes_since_last: usize,
+        bytes_so_far: u64,
+        bytes_since_last: u64,
     },
 }

@@ -1,7 +1,8 @@
 use crate::{cache, git, git_lfs, misc, writer};
+use bytes::Bytes;
 use clap::Parser;
 use futures::future::OptionFuture;
-use futures::{FutureExt, TryFutureExt, TryStreamExt};
+use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
 use http::{Request, StatusCode, Uri};
 use http_body_util::{BodyExt, Empty};
 use serde::Serialize;
@@ -16,6 +17,7 @@ use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Clone, Debug, Parser)]
 pub struct Opts {
+    #[clap(long)]
     cache: Option<cache::Opts>,
 }
 
@@ -59,7 +61,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
                 .await?
             }
             git_lfs::custom_transfers::Request::Download { oid, size } => {
-                let (path, error) = match context.download(&oid, size).await {
+                let (path, error) = match context.download(&mut stdout, &oid, size).await {
                     Ok(v) => (Some(v), None),
                     Err(e) => (None, Some(error(e))),
                 };
@@ -163,7 +165,12 @@ impl Context {
     }
 
     #[tracing::instrument(err, ret)]
-    async fn download(&mut self, oid: &str, size: u64) -> anyhow::Result<PathBuf> {
+    async fn download(
+        &mut self,
+        stdout: &mut io::Stdout,
+        oid: &str,
+        size: u64,
+    ) -> anyhow::Result<PathBuf> {
         let temp_dir = self.git_dir.join("lfs").join("tmp");
         fs::create_dir_all(&temp_dir).await?;
 
@@ -181,9 +188,10 @@ impl Context {
                     Ok(())
                 }
             };
-            match futures::future::join(cache.get(oid, size, writer), check).await {
-                (Ok(path), Ok(_)) => Some(path),
-                (Ok(path), _) => {
+            let progress = progress(&mut *stdout, oid, writer.subscribe().await?);
+            match futures::future::join3(cache.get(oid, size, writer), check, progress).await {
+                (Ok(path), Ok(_), _) => Some(path),
+                (Ok(path), _, _) => {
                     fs::remove_file(path).await?;
                     None
                 }
@@ -235,7 +243,8 @@ impl Context {
                         } else {
                             None
                         };
-                        let (path, _) = futures::future::try_join(
+                        let progress = progress(&mut *stdout, oid, writer.subscribe().await?);
+                        let (path, _, _) = futures::future::try_join3(
                             async {
                                 while let Some(frame) = body.frame().await.transpose()? {
                                     if let Ok(data) = frame.into_data() {
@@ -245,6 +254,7 @@ impl Context {
                                 Ok(writer.finish().await?)
                             },
                             OptionFuture::from(put).map(Option::transpose),
+                            progress,
                         )
                         .await?;
                         Ok(path)
@@ -264,4 +274,44 @@ impl Context {
             }
         }
     }
+}
+
+async fn progress<B, E>(stdout: &mut io::Stdout, oid: &str, body: B) -> anyhow::Result<()>
+where
+    B: Stream<Item = Result<Bytes, E>>,
+    anyhow::Error: From<E>,
+{
+    let mut bytes_so_far = 0;
+    let mut bytes_since_last = 0;
+
+    let mut body = pin::pin!(body);
+    while let Some(data) = body.try_next().await? {
+        bytes_so_far += data.len() as u64;
+        bytes_since_last += data.len() as u64;
+
+        if bytes_since_last >= 1 << 16 {
+            respond(
+                stdout,
+                &git_lfs::custom_transfers::Response::Progress {
+                    oid,
+                    bytes_so_far,
+                    bytes_since_last,
+                },
+            )
+            .await?;
+            bytes_since_last = 0;
+        }
+    }
+    if bytes_since_last > 0 {
+        respond(
+            stdout,
+            &git_lfs::custom_transfers::Response::Progress {
+                oid,
+                bytes_so_far,
+                bytes_since_last,
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }
