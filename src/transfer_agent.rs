@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-#[derive(Clone, Debug, Parser)]
+#[derive(Debug, Parser)]
 pub struct Opts {
     #[clap(long)]
     cache: Option<cache::Opts>,

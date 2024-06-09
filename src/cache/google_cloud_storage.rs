@@ -4,14 +4,13 @@ use futures::{Stream, TryStreamExt};
 use http::header;
 use http::Request;
 use http_body::Frame;
-use http_body_util::StreamBody;
-use http_body_util::{BodyExt, Empty};
-use serde::Deserialize;
+use http_body_util::{BodyExt, Empty, StreamBody};
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::fmt;
 use std::path::PathBuf;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Opts {
     bucket: String,
     prefix: Option<String>,

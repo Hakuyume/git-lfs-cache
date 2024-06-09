@@ -1,3 +1,4 @@
+use clap::Parser;
 use http::Uri;
 use secrecy::Secret;
 use std::collections::HashMap;
@@ -6,6 +7,48 @@ use std::iter;
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Command;
+
+#[derive(Clone, Debug, Parser)]
+#[group(multiple = false)]
+pub(super) struct Location {
+    #[clap(long, group = "config")]
+    system: bool,
+    #[clap(long, group = "config")]
+    global: bool,
+    #[clap(long, group = "config")]
+    local: bool,
+    #[clap(long)]
+    worktree: bool,
+    #[clap(long)]
+    file: Option<PathBuf>,
+}
+
+#[tracing::instrument(err, ret, skip(f))]
+pub async fn config<F>(location: &Location, f: F) -> anyhow::Result<()>
+where
+    F: FnOnce(&mut Command) -> &mut Command,
+{
+    let mut command = Command::new("git");
+    command.arg("config");
+    if location.system {
+        command.arg("--system");
+    }
+    if location.global {
+        command.arg("--global");
+    }
+    if location.local {
+        command.arg("--local");
+    }
+    if location.worktree {
+        command.arg("--worktree");
+    }
+    if let Some(file) = &location.file {
+        command.arg("--file").arg(file);
+    }
+    let status = f(&mut command).stdin(Stdio::null()).status().await?;
+    anyhow::ensure!(status.success());
+    Ok(())
+}
 
 #[tracing::instrument(err, ret)]
 pub async fn config_get_urlmatch(key: &str, url: &Uri) -> anyhow::Result<Vec<String>> {

@@ -3,13 +3,12 @@ mod google_cloud_storage;
 
 use crate::writer;
 use bytes::Bytes;
-use futures::Stream;
-use futures::TryFutureExt;
-use serde::Deserialize;
+use futures::{Stream, TryFutureExt};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Opts {
     Filesystem(filesystem::Opts),

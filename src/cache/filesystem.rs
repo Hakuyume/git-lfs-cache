@@ -1,13 +1,13 @@
 use crate::writer;
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::pin;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Opts {
     dir: PathBuf,
 }
