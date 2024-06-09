@@ -10,17 +10,23 @@ use std::env;
 use std::fmt;
 use std::path::PathBuf;
 
+pub struct Cache {
+    client: misc::Client,
+    authenticator: yup_oauth2::authenticator::DefaultAuthenticator,
+    bucket: String,
+    prefix: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Opts {
     bucket: String,
     prefix: Option<String>,
 }
 
-pub struct Cache {
-    client: misc::Client,
-    authenticator: yup_oauth2::authenticator::DefaultAuthenticator,
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Source {
     bucket: String,
-    prefix: Option<String>,
+    name: String,
 }
 
 impl fmt::Debug for Cache {
@@ -93,12 +99,14 @@ impl Cache {
         oid: &str,
         size: u64,
         mut writer: writer::Writer,
-    ) -> anyhow::Result<PathBuf> {
+    ) -> anyhow::Result<(PathBuf, Source)> {
+        let name = self.name(oid);
+
         // https://cloud.google.com/storage/docs/json_api/v1/objects/get
         let builder = Request::get(format!(
             "https://storage.googleapis.com/storage/v1/b/{}/o/{}?alt=media",
             self.bucket,
-            urlencoding::encode(&self.name(oid)),
+            urlencoding::encode(&name),
         ));
         let builder = self.authorization(builder).await?;
         let request = builder.body(Empty::new().map_err(Box::from).boxed_unsync())?;
@@ -110,7 +118,13 @@ impl Cache {
                     writer.write(&data).await?;
                 }
             }
-            Ok(writer.finish().await?)
+            Ok((
+                writer.finish().await?,
+                Source {
+                    bucket: self.bucket.clone(),
+                    name,
+                },
+            ))
         } else {
             let body = body.collect().await?.to_bytes();
             Err(git_lfs::Error {

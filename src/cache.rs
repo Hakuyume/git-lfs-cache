@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 
+#[derive(Debug)]
+pub enum Cache {
+    Filesystem(filesystem::Cache),
+    GoogleCloudStorage(google_cloud_storage::Cache),
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Opts {
@@ -22,10 +28,10 @@ impl FromStr for Opts {
     }
 }
 
-#[derive(Debug)]
-pub enum Cache {
-    Filesystem(filesystem::Cache),
-    GoogleCloudStorage(google_cloud_storage::Cache),
+#[derive(Debug, Deserialize, Serialize)]
+pub enum Source {
+    Filesystem(filesystem::Source),
+    GoogleCloudStorage(google_cloud_storage::Source),
 }
 
 impl Cache {
@@ -45,10 +51,20 @@ impl Cache {
         oid: &str,
         size: u64,
         writer: writer::Writer,
-    ) -> anyhow::Result<PathBuf> {
+    ) -> anyhow::Result<(PathBuf, Source)> {
         match self {
-            Self::Filesystem(cache) => cache.get(oid, size, writer).await,
-            Self::GoogleCloudStorage(cache) => cache.get(oid, size, writer).await,
+            Self::Filesystem(cache) => {
+                cache
+                    .get(oid, size, writer)
+                    .map_ok(|(path, source)| (path, Source::Filesystem(source)))
+                    .await
+            }
+            Self::GoogleCloudStorage(cache) => {
+                cache
+                    .get(oid, size, writer)
+                    .map_ok(|(path, source)| (path, Source::GoogleCloudStorage(source)))
+                    .await
+            }
         }
     }
 

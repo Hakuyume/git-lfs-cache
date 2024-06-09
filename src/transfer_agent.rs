@@ -1,19 +1,18 @@
-use crate::{cache, git, git_lfs, misc, writer};
+use crate::{cache, git, git_lfs, jsonl, logs, misc, writer};
 use bytes::Bytes;
 use clap::Parser;
 use futures::future::OptionFuture;
-use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
+use futures::{FutureExt, Stream, TryStreamExt};
 use http::{Request, StatusCode, Uri};
 use http_body_util::{BodyExt, Empty};
-use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::fmt::Debug;
-use std::future;
 use std::path::PathBuf;
-use std::pin::{self, Pin};
+use std::pin;
 use std::sync::Arc;
-use tokio::fs;
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::fs::{self, File};
+use tokio::io;
 
 #[derive(Debug, Parser)]
 pub struct Opts {
@@ -24,56 +23,40 @@ pub struct Opts {
 pub async fn main(opts: Opts) -> anyhow::Result<()> {
     let mut context = Context::new(opts).await?;
 
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
+    let mut stdin = jsonl::Reader::new(io::stdin());
+    let mut stdout = jsonl::Writer::new(io::stdout());
 
-    let mut requests = futures::stream::poll_fn({
-        let mut lines = BufReader::new(stdin).lines();
-        move |cx| {
-            Pin::new(&mut lines)
-                .poll_next_line(cx)
-                .map(Result::transpose)
-        }
-    })
-    .and_then(|line| future::ready(serde_json::from_str(&line)).err_into());
-
-    while let Some(request) = requests.try_next().await? {
-        match request {
+    while let Some(line) = stdin.read().await? {
+        match line {
             git_lfs::custom_transfers::Request::Init {
                 operation, remote, ..
             } => {
                 let error = context.init(operation, &remote).await.err().map(error);
-                respond(
-                    &mut stdout,
-                    &git_lfs::custom_transfers::InitResponse { error },
-                )
-                .await?;
+                stdout
+                    .write(&git_lfs::custom_transfers::InitResponse { error })
+                    .await?;
             }
             git_lfs::custom_transfers::Request::Upload { oid, .. } => {
-                respond(
-                    &mut stdout,
-                    &git_lfs::custom_transfers::Response::Complete {
+                stdout
+                    .write(&git_lfs::custom_transfers::Response::Complete {
                         oid: &oid,
                         path: None,
                         error: Some(error(anyhow::format_err!("unimplemented"))),
-                    },
-                )
-                .await?
+                    })
+                    .await?
             }
             git_lfs::custom_transfers::Request::Download { oid, size } => {
-                let (path, error) = match context.download(&mut stdout, &oid, size).await {
+                let (path, error) = match context.download(&oid, size, &mut stdout).await {
                     Ok(v) => (Some(v), None),
                     Err(e) => (None, Some(error(e))),
                 };
-                respond(
-                    &mut stdout,
-                    &git_lfs::custom_transfers::Response::Complete {
+                stdout
+                    .write(&git_lfs::custom_transfers::Response::Complete {
                         oid: &oid,
                         path: path.as_deref(),
                         error,
-                    },
-                )
-                .await?
+                    })
+                    .await?
             }
             git_lfs::custom_transfers::Request::Terminate => break,
         }
@@ -92,21 +75,11 @@ fn error(e: anyhow::Error) -> git_lfs::Error {
     }
 }
 
-#[tracing::instrument(err)]
-async fn respond<T>(stdout: &mut io::Stdout, response: &T) -> anyhow::Result<()>
-where
-    T: Debug + Serialize,
-{
-    stdout.write_all(&serde_json::to_vec(response)?).await?;
-    stdout.write_all(b"\n").await?;
-    stdout.flush().await?;
-    Ok(())
-}
-
 #[derive(Debug)]
 struct Context {
     client: misc::Client,
     git_dir: PathBuf,
+    logs: jsonl::Writer<File>,
     cache: Option<cache::Cache>,
     operation: Option<git_lfs::Operation>,
     url: Option<Uri>,
@@ -118,6 +91,14 @@ impl Context {
     async fn new(opts: Opts) -> anyhow::Result<Self> {
         let git_dir = git::rev_parse_git_dir().await?.canonicalize()?;
 
+        let logs_dir = logs::dir(&git_dir);
+        fs::create_dir_all(&logs_dir).await?;
+        let (logs, _) = tempfile::Builder::new()
+            .prefix("")
+            .suffix(".jsonl")
+            .tempfile_in(logs_dir)?
+            .keep()?;
+
         let cache = if let Some(opts) = opts.cache {
             Some(cache::Cache::new(opts).await?)
         } else {
@@ -127,6 +108,7 @@ impl Context {
         Ok(Self {
             client: misc::client()?,
             git_dir,
+            logs: jsonl::Writer::new(File::from_std(logs)),
             cache,
             operation: None,
             url: None,
@@ -164,12 +146,12 @@ impl Context {
         }
     }
 
-    #[tracing::instrument(err, ret)]
+    #[tracing::instrument(err, ret, skip(stdout))]
     async fn download(
         &mut self,
-        stdout: &mut io::Stdout,
         oid: &str,
         size: u64,
+        stdout: &mut jsonl::Writer<io::Stdout>,
     ) -> anyhow::Result<PathBuf> {
         let temp_dir = self.git_dir.join("lfs").join("tmp");
         fs::create_dir_all(&temp_dir).await?;
@@ -188,10 +170,20 @@ impl Context {
                     Ok(())
                 }
             };
-            let progress = progress(&mut *stdout, oid, writer.subscribe().await?);
+            let progress = progress(oid, writer.subscribe().await?, &mut *stdout);
             match futures::future::join3(cache.get(oid, size, writer), check, progress).await {
-                (Ok(path), Ok(_), _) => Some(path),
-                (Ok(path), _, _) => {
+                (Ok((path, source)), Ok(_), _) => {
+                    self.logs
+                        .write(&logs::Line {
+                            operation: git_lfs::Operation::Download,
+                            oid: Cow::Borrowed(oid),
+                            size,
+                            cache: Some(source),
+                        })
+                        .await?;
+                    Some(path)
+                }
+                (Ok((path, _)), _, _) => {
                     fs::remove_file(path).await?;
                     None
                 }
@@ -243,7 +235,7 @@ impl Context {
                         } else {
                             None
                         };
-                        let progress = progress(&mut *stdout, oid, writer.subscribe().await?);
+                        let progress = progress(oid, writer.subscribe().await?, &mut *stdout);
                         let (path, _, _) = futures::future::try_join3(
                             async {
                                 while let Some(frame) = body.frame().await.transpose()? {
@@ -257,6 +249,14 @@ impl Context {
                             progress,
                         )
                         .await?;
+                        self.logs
+                            .write(&logs::Line {
+                                operation: git_lfs::Operation::Download,
+                                oid: Cow::Borrowed(oid),
+                                size,
+                                cache: None,
+                            })
+                            .await?;
                         Ok(path)
                     } else {
                         let body = body.collect().await?.to_bytes();
@@ -276,7 +276,11 @@ impl Context {
     }
 }
 
-async fn progress<B, E>(stdout: &mut io::Stdout, oid: &str, body: B) -> anyhow::Result<()>
+async fn progress<B, E>(
+    oid: &str,
+    body: B,
+    stdout: &mut jsonl::Writer<io::Stdout>,
+) -> anyhow::Result<()>
 where
     B: Stream<Item = Result<Bytes, E>>,
     anyhow::Error: From<E>,
@@ -290,28 +294,24 @@ where
         bytes_since_last += data.len() as u64;
 
         if bytes_since_last >= 1 << 16 {
-            respond(
-                stdout,
-                &git_lfs::custom_transfers::Response::Progress {
+            stdout
+                .write(&git_lfs::custom_transfers::Response::Progress {
                     oid,
                     bytes_so_far,
                     bytes_since_last,
-                },
-            )
-            .await?;
+                })
+                .await?;
             bytes_since_last = 0;
         }
     }
     if bytes_since_last > 0 {
-        respond(
-            stdout,
-            &git_lfs::custom_transfers::Response::Progress {
+        stdout
+            .write(&git_lfs::custom_transfers::Response::Progress {
                 oid,
                 bytes_so_far,
                 bytes_since_last,
-            },
-        )
-        .await?;
+            })
+            .await?;
     }
     Ok(())
 }

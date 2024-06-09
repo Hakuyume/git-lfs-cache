@@ -7,14 +7,19 @@ use std::pin;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+#[derive(Debug)]
+pub struct Cache {
+    dir: PathBuf,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Opts {
     dir: PathBuf,
 }
 
-#[derive(Debug)]
-pub struct Cache {
-    dir: PathBuf,
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Source {
+    path: PathBuf,
 }
 
 impl Cache {
@@ -28,8 +33,9 @@ impl Cache {
         oid: &str,
         size: u64,
         mut writer: writer::Writer,
-    ) -> anyhow::Result<PathBuf> {
-        let mut reader = BufReader::new(File::open(self.path(oid)).await?);
+    ) -> anyhow::Result<(PathBuf, Source)> {
+        let path = self.path(oid);
+        let mut reader = BufReader::new(File::open(&path).await?);
         loop {
             let data = reader.fill_buf().await?;
             if data.is_empty() {
@@ -40,7 +46,7 @@ impl Cache {
                 reader.consume(len);
             }
         }
-        Ok(writer.finish().await?)
+        Ok((writer.finish().await?, Source { path }))
     }
 
     #[tracing::instrument(err, ret, skip(body))]

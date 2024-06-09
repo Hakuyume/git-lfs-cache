@@ -2,6 +2,8 @@ mod cache;
 mod git;
 mod git_lfs;
 mod install;
+mod jsonl;
+mod logs;
 mod misc;
 mod transfer_agent;
 mod writer;
