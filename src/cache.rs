@@ -29,6 +29,7 @@ impl FromStr for Opts {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Source {
     Filesystem(filesystem::Source),
     GoogleCloudStorage(google_cloud_storage::Source),

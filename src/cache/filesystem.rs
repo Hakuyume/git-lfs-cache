@@ -24,7 +24,10 @@ pub struct Source {
 
 impl Cache {
     pub async fn new(opts: Opts) -> anyhow::Result<Self> {
-        Ok(Self { dir: opts.dir })
+        fs::create_dir_all(&opts.dir).await?;
+        Ok(Self {
+            dir: opts.dir.canonicalize()?,
+        })
     }
 
     #[tracing::instrument(err, ret)]
