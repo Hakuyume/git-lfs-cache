@@ -31,3 +31,7 @@ yup-oauth2 = "10"
 
 [dev-dependencies]
 rand = "0.8"
+
+[profile.release]
+lto = true
+strip = true
