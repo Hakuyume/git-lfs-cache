@@ -11,14 +11,12 @@ pub type Client = hyper_util::client::legacy::Client<
     UnsyncBoxBody<Bytes, Box<dyn error::Error + Send + Sync>>,
 >;
 pub fn client() -> Result<Client, io::Error> {
-    let mut connector = HttpConnector::new();
-    connector.enforce_http(false);
     let connector = HttpsConnectorBuilder::new()
         .with_native_roots()?
         .https_or_http()
         .enable_http1()
         .enable_http2()
-        .wrap_connector(connector);
+        .build();
     Ok(hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(connector))
 }
 

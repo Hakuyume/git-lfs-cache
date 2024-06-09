@@ -15,7 +15,7 @@ http-body = "1"
 http-body-util = "0.1"
 http-serde = "2"
 hyper = "1"
-hyper-rustls = { version = "0.27", features = ["http1", "http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "ring", "rustls-native-certs"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
 secrecy = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -27,7 +27,7 @@ thiserror = "1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread"] }
 tracing = "0.1"
 urlencoding = "2"
-yup-oauth2 = "10"
+yup-oauth2 = { version = "10", default-features = false, features = ["hyper-rustls"] }
 
 [dev-dependencies]
 rand = "0.8"
