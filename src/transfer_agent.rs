@@ -16,7 +16,6 @@ use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Clone, Debug, Parser)]
 pub struct Opts {
-    #[clap(long = "cache")]
     cache: Option<cache::Opts>,
 }
 
