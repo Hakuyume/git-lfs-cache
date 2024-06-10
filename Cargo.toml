@@ -15,7 +15,7 @@ http-body = "1"
 http-body-util = "0.1"
 http-serde = "2"
 hyper = "1"
-hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "ring", "rustls-native-certs"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "logging", "ring", "rustls-native-certs"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
 secrecy = "0.8"
 serde = { version = "1", features = ["derive"] }
