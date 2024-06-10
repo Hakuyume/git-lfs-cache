@@ -79,7 +79,9 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/hakuyume/git-lfs-cache:${{ github.sha }}
+          tags: |
+            ghcr.io/hakuyume/git-lfs-cache:${{ github.sha }}
+            ghcr.io/hakuyume/git-lfs-cache
   oras:
     if: github.ref == 'refs/heads/main'
     needs: cargo-build
@@ -95,4 +97,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: oras push ghcr.io/hakuyume/git-lfs-cache:${{ github.sha }}-oras git-lfs-cache
+      - run: |
+          oras push ghcr.io/hakuyume/git-lfs-cache:${{ github.sha }}-oras git-lfs-cache
+          oras push ghcr.io/hakuyume/git-lfs-cache:oras git-lfs-cache
