@@ -13,6 +13,9 @@ use std::pin;
 use std::sync::Arc;
 use tokio::fs::{self, File};
 use tokio::io;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[derive(Debug, Parser)]
 pub struct Opts {
@@ -21,7 +24,26 @@ pub struct Opts {
 }
 
 pub async fn main(opts: Opts) -> anyhow::Result<()> {
-    let mut context = Context::new(opts).await?;
+    let git_dir = git::rev_parse_git_dir().await?.canonicalize()?;
+    let logs_dir = logs::dir(&git_dir);
+    fs::create_dir_all(&logs_dir).await?;
+
+    let subscriber = tracing_subscriber::Registry::default().with(
+        tracing_subscriber::fmt::layer()
+            .with_writer(
+                tempfile::Builder::new()
+                    .prefix("")
+                    .suffix(".log")
+                    .tempfile_in(&logs_dir)?
+                    .keep()?
+                    .0
+                    .with_max_level(tracing::Level::INFO),
+            )
+            .with_ansi(false),
+    );
+    subscriber.try_init()?;
+
+    let mut context = Context::new(opts, git_dir, logs_dir).await?;
 
     let mut stdin = jsonl::Reader::new(io::stdin());
     let mut stdout = jsonl::Writer::new(io::stdout());
@@ -88,11 +110,7 @@ struct Context {
 
 impl Context {
     #[tracing::instrument(err, ret)]
-    async fn new(opts: Opts) -> anyhow::Result<Self> {
-        let git_dir = git::rev_parse_git_dir().await?.canonicalize()?;
-
-        let logs_dir = logs::dir(&git_dir);
-        fs::create_dir_all(&logs_dir).await?;
+    async fn new(opts: Opts, git_dir: PathBuf, logs_dir: PathBuf) -> anyhow::Result<Self> {
         let (logs, _) = tempfile::Builder::new()
             .prefix("")
             .suffix(".jsonl")
