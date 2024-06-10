@@ -13,7 +13,6 @@ use std::pin;
 use std::sync::Arc;
 use tokio::fs::{self, File};
 use tokio::io;
-use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -28,20 +27,21 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
     let logs_dir = logs::dir(&git_dir);
     fs::create_dir_all(&logs_dir).await?;
 
-    let subscriber = tracing_subscriber::Registry::default().with(
-        tracing_subscriber::fmt::layer()
-            .with_writer(
-                tempfile::Builder::new()
-                    .prefix("")
-                    .suffix(".log")
-                    .tempfile_in(&logs_dir)?
-                    .keep()?
-                    .0
-                    .with_max_level(tracing::Level::INFO),
-            )
-            .with_ansi(false),
-    );
-    subscriber.try_init()?;
+    tracing_subscriber::Registry::default()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(
+                    tempfile::Builder::new()
+                        .prefix("")
+                        .suffix(".log")
+                        .tempfile_in(&logs_dir)?
+                        .keep()?
+                        .0,
+                )
+                .with_ansi(false),
+        )
+        .with(tracing_subscriber::filter::EnvFilter::from_default_env())
+        .try_init()?;
 
     let mut context = Context::new(opts, git_dir, logs_dir).await?;
 
