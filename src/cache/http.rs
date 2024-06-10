@@ -1,6 +1,7 @@
 use crate::{git_lfs, misc, writer};
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
+use headers::HeaderMapExt;
 use http::{header, Request, Uri};
 use http_body::Frame;
 use http_body_util::{BodyExt, Empty, StreamBody};
@@ -126,16 +127,19 @@ impl Cache {
 
     async fn authorization(
         &self,
-        builder: http::request::Builder,
+        mut builder: http::request::Builder,
     ) -> anyhow::Result<http::request::Builder> {
-        match &self.authorization {
-            Some(Authorization::Bearer(bearer)) => {
-                let token = match bearer {
-                    Bearer::TokenPath(path) => fs::read_to_string(path).await?,
-                };
-                Ok(builder.header(header::AUTHORIZATION, format!("Bearer {}", token.trim())))
+        if let Some(headers) = builder.headers_mut() {
+            match &self.authorization {
+                Some(Authorization::Bearer(bearer)) => {
+                    let token = match bearer {
+                        Bearer::TokenPath(path) => fs::read_to_string(path).await?,
+                    };
+                    headers.typed_insert(headers::Authorization::bearer(token.trim())?);
+                }
+                None => (),
             }
-            None => Ok(builder),
         }
+        Ok(builder)
     }
 }
