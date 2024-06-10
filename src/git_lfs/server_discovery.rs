@@ -24,12 +24,12 @@ pub async fn server_discovery(url: &Uri, operation: Operation) -> anyhow::Result
                 header.typed_insert(Authorization::basic(&username, password.expose_secret()));
             }
             // thanks to @kmaehashi
-            if let Ok(lines) = git::config_get_urlmatch("http.extraHeader", url).await {
+            if let Ok(lines) = git::config_get_urlmatch("http.extraheader", url).await {
                 header.extend(lines.into_iter().filter_map(|line| {
-                    let (name, value) = line.split_once('=')?;
+                    let (name, value) = line.split_once(':')?;
                     Some((
-                        HeaderName::try_from(name).ok()?,
-                        HeaderValue::try_from(value).ok()?,
+                        HeaderName::try_from(name.trim()).ok()?,
+                        HeaderValue::try_from(value.trim()).ok()?,
                     ))
                 }));
             }
