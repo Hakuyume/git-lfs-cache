@@ -3,7 +3,7 @@
 use super::Operation;
 use crate::{git, misc};
 use headers::{Authorization, HeaderMapExt};
-use http::{HeaderMap, HeaderName, HeaderValue, Uri};
+use http::{header, HeaderMap, HeaderName, HeaderValue, Uri};
 use secrecy::ExposeSecret;
 
 #[tracing::instrument(err, ret)]
@@ -15,14 +15,6 @@ pub async fn server_discovery(url: &Uri, operation: Operation) -> anyhow::Result
             })?;
 
             let mut header = HeaderMap::new();
-            if let Ok(git::Credential {
-                username: Some(username),
-                password: Some(password),
-                ..
-            }) = git::credential_fill(url).await
-            {
-                header.typed_insert(Authorization::basic(&username, password.expose_secret()));
-            }
             // thanks to @kmaehashi
             if let Ok(lines) = git::config_get_urlmatch("http.extraheader", url).await {
                 header.extend(lines.into_iter().filter_map(|line| {
@@ -32,6 +24,16 @@ pub async fn server_discovery(url: &Uri, operation: Operation) -> anyhow::Result
                         HeaderValue::try_from(value.trim()).ok()?,
                     ))
                 }));
+            }
+            if !header.contains_key(header::AUTHORIZATION) {
+                if let Ok(git::Credential {
+                    username: Some(username),
+                    password: Some(password),
+                    ..
+                }) = git::credential_fill(url).await
+                {
+                    header.typed_insert(Authorization::basic(&username, password.expose_secret()));
+                }
             }
 
             Ok(Response { href, header })
