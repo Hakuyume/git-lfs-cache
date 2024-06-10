@@ -1,8 +1,7 @@
 use crate::{git_lfs, misc, writer};
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
-use http::header;
-use http::Request;
+use http::{header, Request};
 use http_body::Frame;
 use http_body_util::{BodyExt, Empty, StreamBody};
 use serde::{Deserialize, Serialize};
@@ -86,7 +85,7 @@ impl Cache {
         };
 
         Ok(Self {
-            client: misc::client()?,
+            client,
             authenticator,
             bucket: opts.bucket,
             prefix: opts.prefix,
