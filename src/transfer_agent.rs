@@ -92,7 +92,7 @@ fn error(e: anyhow::Error) -> git_lfs::Error {
         Ok(e) => e,
         Err(e) => git_lfs::Error {
             code: StatusCode::INTERNAL_SERVER_ERROR,
-            message: e.to_string(),
+            message: format!("{e:?}"),
         },
     }
 }
