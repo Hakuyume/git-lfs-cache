@@ -1,8 +1,8 @@
 use crate::{git_lfs, misc, writer};
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
-use http::header;
-use http::Request;
+use headers::HeaderMapExt;
+use http::{header, Request};
 use http_body::Frame;
 use http_body_util::{BodyExt, Empty, StreamBody};
 use serde::{Deserialize, Serialize};
@@ -86,7 +86,7 @@ impl Cache {
         };
 
         Ok(Self {
-            client: misc::client()?,
+            client,
             authenticator,
             bucket: opts.bucket,
             prefix: opts.prefix,
@@ -179,20 +179,19 @@ impl Cache {
 
     async fn authorization(
         &self,
-        builder: http::request::Builder,
+        mut builder: http::request::Builder,
     ) -> anyhow::Result<http::request::Builder> {
-        let token = self
-            .authenticator
-            .token(&["https://www.googleapis.com/auth/cloud-platform"])
-            .await?;
-        Ok(builder.header(
-            header::AUTHORIZATION,
-            format!(
-                "Bearer {}",
+        if let Some(headers) = builder.headers_mut() {
+            let token = self
+                .authenticator
+                .token(&["https://www.googleapis.com/auth/cloud-platform"])
+                .await?;
+            headers.typed_insert(headers::Authorization::bearer(
                 token
                     .token()
-                    .ok_or_else(|| anyhow::format_err!("missing token"))?
-            ),
-        ))
+                    .ok_or_else(|| anyhow::format_err!("missing token"))?,
+            )?);
+        }
+        Ok(builder)
     }
 }

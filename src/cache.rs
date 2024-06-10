@@ -1,5 +1,6 @@
 mod filesystem;
 mod google_cloud_storage;
+mod http;
 
 use crate::writer;
 use bytes::Bytes;
@@ -12,6 +13,7 @@ use std::str::FromStr;
 pub enum Cache {
     Filesystem(filesystem::Cache),
     GoogleCloudStorage(google_cloud_storage::Cache),
+    Http(http::Cache),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -19,6 +21,7 @@ pub enum Cache {
 pub enum Opts {
     Filesystem(filesystem::Opts),
     GoogleCloudStorage(google_cloud_storage::Opts),
+    Http(http::Opts),
 }
 
 impl FromStr for Opts {
@@ -33,6 +36,7 @@ impl FromStr for Opts {
 pub enum Source {
     Filesystem(filesystem::Source),
     GoogleCloudStorage(google_cloud_storage::Source),
+    Http(http::Source),
 }
 
 impl Cache {
@@ -44,6 +48,7 @@ impl Cache {
                     .map_ok(Self::GoogleCloudStorage)
                     .await
             }
+            Opts::Http(opts) => http::Cache::new(opts).map_ok(Self::Http).await,
         }
     }
 
@@ -66,6 +71,12 @@ impl Cache {
                     .map_ok(|(path, source)| (path, Source::GoogleCloudStorage(source)))
                     .await
             }
+            Self::Http(cache) => {
+                cache
+                    .get(oid, size, writer)
+                    .map_ok(|(path, source)| (path, Source::Http(source)))
+                    .await
+            }
         }
     }
 
@@ -77,6 +88,7 @@ impl Cache {
         match self {
             Self::Filesystem(cache) => cache.put(oid, size, body).await,
             Self::GoogleCloudStorage(cache) => cache.put(oid, size, body).await,
+            Self::Http(cache) => cache.put(oid, size, body).await,
         }
     }
 }
