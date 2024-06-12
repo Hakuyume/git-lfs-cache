@@ -70,6 +70,7 @@ jobs:
           name: ${{ matrix.target }}
           path: target/x86_64-unknown-linux-musl/release/git-lfs-cache
   check:
+    needs: cargo-build
     runs-on: ubuntu-latest
     steps:
       - run: |
@@ -103,6 +104,16 @@ jobs:
           git commit -m commit
 
           git push origin
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-amd64
+      - run: |
+          chmod +x git-lfs-cache
+          ./git-lfs-cache install --global
+      - run: |
+          git clone origin bar
+          cd bar
+          git lfs pull
   docker:
     if: github.ref == 'refs/heads/main'
     needs: cargo-build
