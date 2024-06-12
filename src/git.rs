@@ -8,6 +8,40 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::process::Command;
 
+pub async fn spawn<P, F>(current_dir: P, stdin: Option<&[u8]>, f: F) -> anyhow::Result<Vec<u8>>
+where
+    P: AsRef<Path>,
+    F: FnOnce(&mut Command) -> &mut Command,
+{
+    let mut command = Command::new("git");
+    command
+        .current_dir(current_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = f(&mut command).spawn()?;
+
+    let copy = {
+        let mut reader = stdin.unwrap_or_default();
+        let writer = child.stdin.take();
+        async move {
+            if let Some(mut writer) = writer {
+                tokio::io::copy(&mut reader, &mut writer).await?;
+            }
+            Ok(())
+        }
+    };
+    let (output, _) = futures::future::try_join(child.wait_with_output(), copy).await?;
+
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(anyhow::format_err!(
+            String::from_utf8_lossy(&output.stderr).into_owned()
+        ))
+    }
+}
+
 #[derive(Clone, Debug, Default, Parser)]
 #[group(multiple = false)]
 pub struct Location {
@@ -29,37 +63,30 @@ where
     P: AsRef<Path> + Debug,
     F: FnOnce(&mut Command) -> &mut Command,
 {
-    let mut command = Command::new("git");
-    command
-        .current_dir(current_dir)
-        .stdin(Stdio::null())
-        .arg("config");
-    if location.system {
-        command.arg("--system");
-    }
-    if location.global {
-        command.arg("--global");
-    }
-    if location.local {
-        command.arg("--local");
-    }
-    if location.worktree {
-        command.arg("--worktree");
-    }
-    if let Some(file) = &location.file {
-        command.arg("--file").arg(file);
-    }
-    let output = f(&mut command).output().await?;
-    if output.status.success() {
-        Ok(String::from_utf8(output.stdout)?
-            .lines()
-            .map(ToString::to_string)
-            .collect())
-    } else {
-        Err(anyhow::format_err!(
-            String::from_utf8_lossy(&output.stderr).into_owned()
-        ))
-    }
+    let stdout = spawn(current_dir, None, |command| {
+        command.arg("config");
+        if location.system {
+            command.arg("--system");
+        }
+        if location.global {
+            command.arg("--global");
+        }
+        if location.local {
+            command.arg("--local");
+        }
+        if location.worktree {
+            command.arg("--worktree");
+        }
+        if let Some(file) = &location.file {
+            command.arg("--file").arg(file);
+        }
+        f(command)
+    })
+    .await?;
+    Ok(String::from_utf8(stdout)?
+        .lines()
+        .map(ToString::to_string)
+        .collect())
 }
 
 #[derive(Debug)]
@@ -85,43 +112,24 @@ where
             inputs
         });
 
-    let mut child = Command::new("git")
-        .current_dir(current_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .arg("credential")
-        .arg("fill")
-        .spawn()?;
-
-    let stdin = child.stdin.take();
-    let (output, _) = futures::future::try_join(child.wait_with_output(), async {
-        if let Some(mut stdin) = stdin {
-            tokio::io::copy(&mut inputs.as_bytes(), &mut stdin).await?;
-        }
-        Ok(())
+    let stdout = spawn(current_dir, Some(inputs.as_bytes()), |command| {
+        command.arg("credential").arg("fill")
     })
     .await?;
 
-    if output.status.success() {
-        // https://git-scm.com/docs/git-credential#IOFMT
-        let outputs = String::from_utf8(output.stdout)?;
-        let outputs = outputs
-            .lines()
-            .filter_map(|line| line.split_once('='))
-            .collect::<HashMap<_, _>>();
-        Ok(Credential {
-            username: outputs.get("username").map(ToString::to_string),
-            password: outputs
-                .get("password")
-                .map(ToString::to_string)
-                .map(Secret::new),
-        })
-    } else {
-        Err(anyhow::format_err!(
-            String::from_utf8_lossy(&output.stderr).into_owned()
-        ))
-    }
+    // https://git-scm.com/docs/git-credential#IOFMT
+    let outputs = String::from_utf8(stdout)?;
+    let outputs = outputs
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .collect::<HashMap<_, _>>();
+    Ok(Credential {
+        username: outputs.get("username").map(ToString::to_string),
+        password: outputs
+            .get("password")
+            .map(ToString::to_string)
+            .map(Secret::new),
+    })
 }
 
 #[tracing::instrument(err, ret(Display))]
@@ -129,21 +137,11 @@ pub async fn remote_get_url<P>(current_dir: P, remote: &str) -> anyhow::Result<U
 where
     P: AsRef<Path> + Debug,
 {
-    let output = Command::new("git")
-        .current_dir(current_dir)
-        .stdin(Stdio::null())
-        .arg("remote")
-        .arg("get-url")
-        .arg(remote)
-        .output()
-        .await?;
-    if output.status.success() {
-        Ok(String::from_utf8(output.stdout)?.trim().parse()?)
-    } else {
-        Err(anyhow::format_err!(
-            String::from_utf8_lossy(&output.stderr).into_owned()
-        ))
-    }
+    let stdout = spawn(current_dir, None, |command| {
+        command.arg("remote").arg("get-url").arg(remote)
+    })
+    .await?;
+    Ok(String::from_utf8(stdout)?.trim().parse()?)
 }
 
 #[tracing::instrument(err, ret)]
@@ -151,20 +149,11 @@ pub async fn rev_parse_absolute_git_dir<P>(current_dir: P) -> anyhow::Result<Pat
 where
     P: AsRef<Path> + Debug,
 {
-    let output = Command::new("git")
-        .current_dir(current_dir)
-        .stdin(Stdio::null())
-        .arg("rev-parse")
-        .arg("--absolute-git-dir")
-        .output()
-        .await?;
-    if output.status.success() {
-        Ok(String::from_utf8(output.stdout)?.trim().into())
-    } else {
-        Err(anyhow::format_err!(
-            String::from_utf8_lossy(&output.stderr).into_owned()
-        ))
-    }
+    let stdout = spawn(current_dir, None, |command| {
+        command.arg("rev-parse").arg("--absolute-git-dir")
+    })
+    .await?;
+    Ok(String::from_utf8(stdout)?.trim().parse()?)
 }
 
 #[tracing::instrument(err, ret)]
@@ -172,18 +161,9 @@ pub async fn rev_parse_show_toplevel<P>(current_dir: P) -> anyhow::Result<PathBu
 where
     P: AsRef<Path> + Debug,
 {
-    let output = Command::new("git")
-        .current_dir(current_dir)
-        .stdin(Stdio::null())
-        .arg("rev-parse")
-        .arg("--show-toplevel")
-        .output()
-        .await?;
-    if output.status.success() {
-        Ok(String::from_utf8(output.stdout)?.trim().into())
-    } else {
-        Err(anyhow::format_err!(
-            String::from_utf8_lossy(&output.stderr).into_owned()
-        ))
-    }
+    let stdout = spawn(current_dir, None, |command| {
+        command.arg("rev-parse").arg("--show-toplevel")
+    })
+    .await?;
+    Ok(String::from_utf8(stdout)?.trim().parse()?)
 }
