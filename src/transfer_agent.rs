@@ -3,10 +3,11 @@ use bytes::Bytes;
 use clap::Parser;
 use futures::future::OptionFuture;
 use futures::{FutureExt, Stream, TryStreamExt};
-use http::{Request, StatusCode, Uri};
+use http::{Request, StatusCode};
 use http_body_util::{BodyExt, Empty};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
+use std::env;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::pin;
@@ -23,7 +24,8 @@ pub struct Opts {
 }
 
 pub async fn main(opts: Opts) -> anyhow::Result<()> {
-    let git_dir = git::rev_parse_git_dir().await?.canonicalize()?;
+    let current_dir = env::current_dir()?;
+    let git_dir = git::rev_parse_absolute_git_dir(&current_dir).await?;
     let logs_dir = logs::dir(&git_dir);
     fs::create_dir_all(&logs_dir).await?;
 
@@ -43,7 +45,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
         .with(tracing_subscriber::filter::EnvFilter::from_default_env())
         .try_init()?;
 
-    let mut context = Context::new(opts, git_dir, logs_dir).await?;
+    let mut context = Context::new(opts, current_dir, git_dir, logs_dir).await?;
 
     let mut stdin = jsonl::Reader::new(io::stdin());
     let mut stdout = jsonl::Writer::new(io::stdout());
@@ -53,7 +55,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
             git_lfs::custom_transfers::Request::Init {
                 operation, remote, ..
             } => {
-                let error = context.init(operation, &remote).await.err().map(error);
+                let error = context.init(operation, remote).await.err().map(error);
                 stdout
                     .write(&git_lfs::custom_transfers::InitResponse { error })
                     .await?;
@@ -100,17 +102,23 @@ fn error(e: anyhow::Error) -> git_lfs::Error {
 #[derive(Debug)]
 struct Context {
     client: misc::Client,
+    current_dir: PathBuf,
     git_dir: PathBuf,
     logs: jsonl::Writer<File>,
     cache: Option<cache::Cache>,
     operation: Option<git_lfs::Operation>,
-    url: Option<Uri>,
+    remote: Option<String>,
     server_discovery: Option<Arc<git_lfs::server_discovery::Response>>,
 }
 
 impl Context {
     #[tracing::instrument(err, ret)]
-    async fn new(opts: Opts, git_dir: PathBuf, logs_dir: PathBuf) -> anyhow::Result<Self> {
+    async fn new(
+        opts: Opts,
+        current_dir: PathBuf,
+        git_dir: PathBuf,
+        logs_dir: PathBuf,
+    ) -> anyhow::Result<Self> {
         let (logs, _) = tempfile::Builder::new()
             .prefix("")
             .suffix(".jsonl")
@@ -125,43 +133,44 @@ impl Context {
 
         Ok(Self {
             client: misc::client()?,
+            current_dir,
             git_dir,
             logs: jsonl::Writer::new(File::from_std(logs)),
             cache,
             operation: None,
-            url: None,
+            remote: None,
             server_discovery: None,
         })
     }
 
     #[tracing::instrument(err, ret)]
-    async fn init(&mut self, operation: git_lfs::Operation, remote: &str) -> anyhow::Result<()> {
+    async fn init(&mut self, operation: git_lfs::Operation, remote: String) -> anyhow::Result<()> {
         self.operation = Some(operation);
-        let url = if let Ok(url) = git::remote_get_url(remote).await {
-            url
-        } else {
-            remote.parse()?
-        };
-        self.url = Some(url);
+        self.remote = Some(remote);
         Ok(())
     }
 
     async fn server_discovery(
         &mut self,
+        authorization: bool,
     ) -> anyhow::Result<Arc<git_lfs::server_discovery::Response>> {
-        if let Some(response) = self.server_discovery.clone() {
-            Ok(response)
-        } else {
-            let url = self
-                .url
-                .as_ref()
-                .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
-            let operation = self
-                .operation
-                .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
-            let response = git_lfs::server_discovery(url, operation).await?;
-            Ok(self.server_discovery.insert(Arc::new(response)).clone())
-        }
+        let response = match (self.server_discovery.clone(), authorization) {
+            (None, _) | (_, true) => {
+                let operation = self
+                    .operation
+                    .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
+                let remote = self
+                    .remote
+                    .as_ref()
+                    .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
+                let response =
+                    git_lfs::server_discovery(&self.current_dir, operation, remote, authorization)
+                        .await?;
+                self.server_discovery.insert(Arc::new(response)).clone()
+            }
+            (Some(response), _) => response,
+        };
+        Ok(response)
     }
 
     #[tracing::instrument(err, ret, skip(stdout))]
@@ -214,18 +223,37 @@ impl Context {
         if let Some(path) = path {
             Ok(path)
         } else {
-            let server_discovery = self.server_discovery().await?;
+            let request = git_lfs::batch::Request {
+                operation: git_lfs::Operation::Download,
+                transfers: &[git_lfs::batch::request::Transfer::Basic],
+                objects: &[git_lfs::batch::request::Object { oid, size }],
+            };
+            let server_discovery = self.server_discovery(false).await?;
             let response = git_lfs::batch(
                 &self.client,
                 &server_discovery.href,
                 &server_discovery.header,
-                &git_lfs::batch::Request {
-                    operation: git_lfs::Operation::Download,
-                    transfers: &[git_lfs::batch::request::Transfer::Basic],
-                    objects: &[git_lfs::batch::request::Object { oid, size }],
-                },
+                &request,
             )
-            .await?;
+            .await;
+            let response = match response {
+                Ok(response) => Ok(response),
+                Err(e) => match e.downcast::<git_lfs::Error>() {
+                    Ok(e) if e.code == StatusCode::UNAUTHORIZED => {
+                        let server_discovery = self.server_discovery(true).await?;
+                        git_lfs::batch(
+                            &self.client,
+                            &server_discovery.href,
+                            &server_discovery.header,
+                            &request,
+                        )
+                        .await
+                    }
+                    Ok(e) => Err(e.into()),
+                    Err(e) => Err(e),
+                },
+            }?;
+
             let object = response
                 .objects
                 .into_iter()
