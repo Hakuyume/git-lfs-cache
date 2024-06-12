@@ -12,6 +12,7 @@ pub struct Opts {
 }
 
 pub async fn main(opts: Opts) -> anyhow::Result<()> {
+    let current_dir = env::current_dir()?;
     let path = env::current_exe()?;
 
     let mut args = vec![Cow::Borrowed("transfer-agent")];
@@ -21,7 +22,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
     }
     let args = shlex::Quoter::new().join(args.iter().map(Borrow::borrow))?;
 
-    git::config(&opts.location, |command| {
+    git::config(&current_dir, &opts.location, |command| {
         command
             .arg(concat!(
                 "lfs.customtransfer.",
@@ -31,7 +32,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
             .arg(path)
     })
     .await?;
-    git::config(&opts.location, |command| {
+    git::config(&current_dir, &opts.location, |command| {
         command
             .arg(concat!(
                 "lfs.customtransfer.",
@@ -41,7 +42,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
             .arg(args)
     })
     .await?;
-    git::config(&opts.location, |command| {
+    git::config(&current_dir, &opts.location, |command| {
         command
             .arg(concat!(
                 "lfs.customtransfer.",
@@ -51,7 +52,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
             .arg("download")
     })
     .await?;
-    git::config(&opts.location, |command| {
+    git::config(&current_dir, &opts.location, |command| {
         command
             .arg("lfs.standalonetransferagent")
             .arg(env!("CARGO_PKG_NAME"))

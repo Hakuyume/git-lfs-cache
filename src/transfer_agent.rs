@@ -7,6 +7,7 @@ use http::{Request, StatusCode};
 use http_body_util::{BodyExt, Empty};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
+use std::env;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::pin;
@@ -23,7 +24,8 @@ pub struct Opts {
 }
 
 pub async fn main(opts: Opts) -> anyhow::Result<()> {
-    let git_dir = git::rev_parse_git_dir().await?.canonicalize()?;
+    let current_dir = env::current_dir()?;
+    let git_dir = git::rev_parse_absolute_git_dir(&current_dir).await?;
     let logs_dir = logs::dir(&git_dir);
     fs::create_dir_all(&logs_dir).await?;
 
@@ -43,7 +45,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
         .with(tracing_subscriber::filter::EnvFilter::from_default_env())
         .try_init()?;
 
-    let mut context = Context::new(opts, git_dir, logs_dir).await?;
+    let mut context = Context::new(opts, current_dir, git_dir, logs_dir).await?;
 
     let mut stdin = jsonl::Reader::new(io::stdin());
     let mut stdout = jsonl::Writer::new(io::stdout());
@@ -100,6 +102,7 @@ fn error(e: anyhow::Error) -> git_lfs::Error {
 #[derive(Debug)]
 struct Context {
     client: misc::Client,
+    current_dir: PathBuf,
     git_dir: PathBuf,
     logs: jsonl::Writer<File>,
     cache: Option<cache::Cache>,
@@ -110,7 +113,12 @@ struct Context {
 
 impl Context {
     #[tracing::instrument(err, ret)]
-    async fn new(opts: Opts, git_dir: PathBuf, logs_dir: PathBuf) -> anyhow::Result<Self> {
+    async fn new(
+        opts: Opts,
+        current_dir: PathBuf,
+        git_dir: PathBuf,
+        logs_dir: PathBuf,
+    ) -> anyhow::Result<Self> {
         let (logs, _) = tempfile::Builder::new()
             .prefix("")
             .suffix(".jsonl")
@@ -125,6 +133,7 @@ impl Context {
 
         Ok(Self {
             client: misc::client()?,
+            current_dir,
             git_dir,
             logs: jsonl::Writer::new(File::from_std(logs)),
             cache,
@@ -154,7 +163,7 @@ impl Context {
                 .remote
                 .as_ref()
                 .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
-            let response = git_lfs::server_discovery(operation, remote).await?;
+            let response = git_lfs::server_discovery(&self.current_dir, operation, remote).await?;
             Ok(self.server_discovery.insert(Arc::new(response)).clone())
         }
     }
