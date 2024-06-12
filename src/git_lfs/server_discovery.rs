@@ -20,7 +20,7 @@ where
     P: AsRef<Path> + Debug,
 {
     let current_dir = current_dir.as_ref();
-    let url = if let Ok(Some(url)) = git::rev_parse_show_toplevel(current_dir)
+    let (url, lfs) = if let Ok(Some(url)) = git::rev_parse_show_toplevel(current_dir)
         .and_then(|toplevel| async move {
             custom_configuration(
                 current_dir,
@@ -34,22 +34,26 @@ where
         })
         .await
     {
-        url
+        (url, true)
     } else if let Ok(Some(url)) =
         custom_configuration(current_dir, &git::Location::default(), remote).await
     {
-        url
+        (url, true)
     } else if let Ok(url) = git::remote_get_url(current_dir, remote).await {
-        url
+        (url, false)
     } else {
-        remote.parse()?
+        (remote.parse()?, false)
     };
 
     match url.scheme_str() {
         Some("http") | Some("https") => {
-            let href = misc::patch_path(url.clone(), |path| {
-                format!("{}.git/info/lfs", path.trim_end_matches(".git"))
-            })?;
+            let href = if lfs {
+                url
+            } else {
+                misc::patch_path(url, |path| {
+                    format!("{}.git/info/lfs", path.trim_end_matches(".git"))
+                })?
+            };
 
             let mut header = HeaderMap::new();
             // thanks to @kmaehashi
@@ -57,7 +61,7 @@ where
                 command
                     .arg("--get-urlmatch")
                     .arg("http.extraheader")
-                    .arg(url.to_string())
+                    .arg(href.to_string())
             })
             .await
             {
@@ -74,7 +78,7 @@ where
                     username: Some(username),
                     password: Some(password),
                     ..
-                }) = git::credential_fill(current_dir, &url).await
+                }) = git::credential_fill(current_dir, &href).await
                 {
                     header.typed_insert(Authorization::basic(&username, password.expose_secret()));
                 }
@@ -124,3 +128,6 @@ where
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests;
