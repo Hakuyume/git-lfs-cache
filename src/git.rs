@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Command;
 
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, Default, Parser)]
 #[group(multiple = false)]
 pub(super) struct Location {
     #[clap(long, group = "config")]
@@ -24,7 +24,7 @@ pub(super) struct Location {
 }
 
 #[tracing::instrument(err, ret, skip(f))]
-pub async fn config<F>(location: &Location, f: F) -> anyhow::Result<()>
+pub async fn config<F>(location: &Location, f: F) -> anyhow::Result<Vec<String>>
 where
     F: FnOnce(&mut Command) -> &mut Command,
 {
@@ -45,21 +45,7 @@ where
     if let Some(file) = &location.file {
         command.arg("--file").arg(file);
     }
-    let status = f(&mut command).stdin(Stdio::null()).status().await?;
-    anyhow::ensure!(status.success());
-    Ok(())
-}
-
-#[tracing::instrument(err, ret)]
-pub async fn config_get_urlmatch(key: &str, url: &Uri) -> anyhow::Result<Vec<String>> {
-    let output = Command::new("git")
-        .arg("config")
-        .arg("--get-urlmatch")
-        .arg(key)
-        .arg(url.to_string())
-        .stdin(Stdio::null())
-        .output()
-        .await?;
+    let output = f(&mut command).stdin(Stdio::null()).output().await?;
     if output.status.success() {
         Ok(String::from_utf8(output.stdout)?
             .lines()

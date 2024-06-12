@@ -16,7 +16,14 @@ pub async fn server_discovery(url: &Uri, operation: Operation) -> anyhow::Result
 
             let mut header = HeaderMap::new();
             // thanks to @kmaehashi
-            if let Ok(lines) = git::config_get_urlmatch("http.extraheader", url).await {
+            if let Ok(lines) = git::config(&git::Location::default(), |command| {
+                command
+                    .arg("--get-urlmatch")
+                    .arg("http.extraheader")
+                    .arg(url.to_string())
+            })
+            .await
+            {
                 header.extend(lines.into_iter().filter_map(|line| {
                     let (name, value) = line.split_once(':')?;
                     Some((
