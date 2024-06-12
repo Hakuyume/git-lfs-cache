@@ -88,7 +88,6 @@ jobs:
            bash check.bash git-lfs-cache --cache='{"filesystem": {"dir": "/tmp/cache"}}'
       - if: matrix.target == 'http'
         run: |
-           sudo apt-get install --yes nginx
            sudo tee /etc/nginx/sites-enabled/default << 'EOD'
            server {
              listen 80 default_server;

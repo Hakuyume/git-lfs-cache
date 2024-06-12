@@ -5,6 +5,7 @@ mod install;
 mod jsonl;
 mod logs;
 mod misc;
+mod stats;
 mod transfer_agent;
 mod writer;
 
@@ -19,6 +20,7 @@ struct Opts {
 #[derive(Debug, Parser)]
 enum Command {
     Install(install::Opts),
+    Stats(stats::Opts),
     TransferAgent(transfer_agent::Opts),
 }
 
@@ -27,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
     match opts.command {
         Command::Install(opts) => install::main(opts).await,
+        Command::Stats(opts) => stats::main(opts).await,
         Command::TransferAgent(opts) => transfer_agent::main(opts).await,
     }
 }
