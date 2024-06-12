@@ -73,47 +73,13 @@ jobs:
     needs: cargo-build
     runs-on: ubuntu-latest
     steps:
-      - run: |
-          curl -L https://github.com/git-lfs/lfs-test-server/releases/download/v0.3.0/Linux.AMD64.gz | tar -xzf -
-
-          export LFS_ADMINUSER=admin
-          export LFS_ADMINPASS=p@ssw0rd
-          ./lfs-test-server-linux-amd64/lfs-test-server &
-
-          git config --global lfs.url http://localhost:8080/
-          git config --global credential.helper store
-          git credential-store store << EOD
-          protocol=http
-          host=localhost:8080
-          username=${LFS_ADMINUSER}
-          password=${LFS_ADMINPASS}
-          EOD
-      - run: git init --bare origin
-      - run: |
-          git clone origin foo
-          cd foo
-
-          git lfs install
-          git lfs track '*.bin'
-
-          for i in {0..7}; do dd if=/dev/urandom of=${i}.bin bs=64k count=1; done
-          git add *.bin
-
-          git config user.name name
-          git config user.email email
-          git commit -m commit
-
-          git push origin
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: linux-amd64
       - run: |
           chmod +x git-lfs-cache
-          ./git-lfs-cache install --global
-      - run: |
-          git clone origin bar
-          cd bar
-          git lfs pull
+          bash check.bash git-lfs-cache --cache={\"filesystem\":{\"dir\":\"$(pwd)/cache\"}}
   docker:
     if: github.ref == 'refs/heads/main'
     needs: cargo-build
