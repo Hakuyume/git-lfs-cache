@@ -152,21 +152,25 @@ impl Context {
 
     async fn server_discovery(
         &mut self,
+        authorization: bool,
     ) -> anyhow::Result<Arc<git_lfs::server_discovery::Response>> {
-        if let Some(response) = self.server_discovery.clone() {
-            Ok(response)
-        } else {
-            let operation = self
-                .operation
-                .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
-            let remote = self
-                .remote
-                .as_ref()
-                .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
-            let response =
-                git_lfs::server_discovery(&self.current_dir, operation, remote, true).await?;
-            Ok(self.server_discovery.insert(Arc::new(response)).clone())
-        }
+        let response = match (self.server_discovery.clone(), authorization) {
+            (None, _) | (_, true) => {
+                let operation = self
+                    .operation
+                    .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
+                let remote = self
+                    .remote
+                    .as_ref()
+                    .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
+                let response =
+                    git_lfs::server_discovery(&self.current_dir, operation, remote, authorization)
+                        .await?;
+                self.server_discovery.insert(Arc::new(response)).clone()
+            }
+            (Some(response), _) => response,
+        };
+        Ok(response)
     }
 
     #[tracing::instrument(err, ret, skip(stdout))]
@@ -219,18 +223,37 @@ impl Context {
         if let Some(path) = path {
             Ok(path)
         } else {
-            let server_discovery = self.server_discovery().await?;
+            let request = git_lfs::batch::Request {
+                operation: git_lfs::Operation::Download,
+                transfers: &[git_lfs::batch::request::Transfer::Basic],
+                objects: &[git_lfs::batch::request::Object { oid, size }],
+            };
+            let server_discovery = self.server_discovery(false).await?;
             let response = git_lfs::batch(
                 &self.client,
                 &server_discovery.href,
                 &server_discovery.header,
-                &git_lfs::batch::Request {
-                    operation: git_lfs::Operation::Download,
-                    transfers: &[git_lfs::batch::request::Transfer::Basic],
-                    objects: &[git_lfs::batch::request::Object { oid, size }],
-                },
+                &request,
             )
-            .await?;
+            .await;
+            let response = match response {
+                Ok(response) => Ok(response),
+                Err(e) => match e.downcast::<git_lfs::Error>() {
+                    Ok(e) if e.code == StatusCode::UNAUTHORIZED => {
+                        let server_discovery = self.server_discovery(true).await?;
+                        git_lfs::batch(
+                            &self.client,
+                            &server_discovery.href,
+                            &server_discovery.header,
+                            &request,
+                        )
+                        .await
+                    }
+                    Ok(e) => Err(e.into()),
+                    Err(e) => Err(e),
+                },
+            }?;
+
             let object = response
                 .objects
                 .into_iter()
