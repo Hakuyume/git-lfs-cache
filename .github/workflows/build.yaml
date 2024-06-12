@@ -71,15 +71,37 @@ jobs:
           path: target/x86_64-unknown-linux-musl/release/git-lfs-cache
   check:
     needs: cargo-build
+    strategy:
+      matrix:
+        target:
+          - filesystem
+          - http
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: linux-amd64
-      - run: |
-          chmod +x git-lfs-cache
-          bash check.bash git-lfs-cache --cache={\"filesystem\":{\"dir\":\"$(pwd)/cache\"}}
+      - run: chmod +x git-lfs-cache
+      - if: matrix.target == 'filesystem'
+        run: |
+           bash check.bash git-lfs-cache --cache='{"filesystem": {"dir": "/tmp/cache"}}'
+      - if: matrix.target == 'http'
+        run: |
+           sudo apt-get install --yes nginx
+           sudo tee /etc/nginx/sites-enabled/default << 'EOD'
+           server {
+             listen 80 default_server;
+             listen [::]:80 default_server;
+             location / {
+                alias /tmp/cache;
+                dav_methods PUT;
+             }
+           }
+           EOD
+           mkdir /tmp/cache
+           sudo systemctl restart nginx.service
+           bash check.bash git-lfs-cache --cache='{"http": {"endpoint": "http://localhost/"}}'
   docker:
     if: github.ref == 'refs/heads/main'
     needs: cargo-build
