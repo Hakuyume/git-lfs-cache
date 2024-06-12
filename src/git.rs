@@ -1,6 +1,7 @@
 use clap::Parser;
 use http::Uri;
 use secrecy::Secret;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{Debug, Write};
 use std::iter;
@@ -100,10 +101,16 @@ where
     // https://git-scm.com/docs/git-credential#IOFMT
     let inputs = url
         .scheme_str()
-        .map(|scheme| ("protocol", scheme))
+        .map(|scheme| ("protocol", Cow::Borrowed(scheme)))
         .into_iter()
-        .chain(url.authority().map(|authority| ("host", authority.host())))
-        .chain(iter::once(("path", url.path().trim_start_matches('/'))))
+        .chain(
+            url.authority()
+                .map(|authority| ("host", Cow::Owned(authority.to_string()))),
+        )
+        .chain(iter::once((
+            "path",
+            Cow::Borrowed(url.path().trim_start_matches('/')),
+        )))
         .fold(String::new(), |mut inputs, (key, value)| {
             let _ = writeln!(inputs, "{key}={value}");
             inputs

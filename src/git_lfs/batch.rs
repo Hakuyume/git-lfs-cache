@@ -14,7 +14,7 @@ pub async fn batch(
     request: &Request<'_>,
 ) -> anyhow::Result<Response> {
     let builder = http::Request::post(misc::patch_path(href.clone(), |path| {
-        format!("{path}/objects/batch")
+        format!("{}/objects/batch", path.trim_end_matches('/'))
     })?);
     let builder = header.iter().fold(builder, |builder, (name, value)| {
         builder.header(name, value)
