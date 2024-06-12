@@ -14,6 +14,7 @@ pub async fn server_discovery<P>(
     current_dir: P,
     operation: Operation,
     remote: &str,
+    authorization: bool,
 ) -> anyhow::Result<Response>
 where
     P: AsRef<Path> + Debug,
@@ -68,7 +69,7 @@ where
                     ))
                 }));
             }
-            if !header.contains_key(header::AUTHORIZATION) {
+            if authorization && !header.contains_key(header::AUTHORIZATION) {
                 if let Ok(git::Credential {
                     username: Some(username),
                     password: Some(password),

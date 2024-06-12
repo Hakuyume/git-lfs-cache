@@ -163,7 +163,8 @@ impl Context {
                 .remote
                 .as_ref()
                 .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
-            let response = git_lfs::server_discovery(&self.current_dir, operation, remote).await?;
+            let response =
+                git_lfs::server_discovery(&self.current_dir, operation, remote, true).await?;
             Ok(self.server_discovery.insert(Arc::new(response)).clone())
         }
     }
