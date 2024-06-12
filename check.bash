@@ -50,6 +50,7 @@ git lfs pull
 cd -
 
 kill ${LFS_TEST_SERVER_PID}
+trap - EXIT
 sleep 1
 
 git clone origin baz
