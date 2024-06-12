@@ -69,7 +69,7 @@ jobs:
         with:
           name: ${{ matrix.target }}
           path: target/x86_64-unknown-linux-musl/release/git-lfs-cache
-  check:
+  test:
     needs: cargo-build
     strategy:
       matrix:
@@ -85,7 +85,7 @@ jobs:
       - run: chmod +x git-lfs-cache
       - if: matrix.target == 'filesystem'
         run: |
-           bash check.bash git-lfs-cache --cache='{"filesystem": {"dir": "/tmp/cache"}}'
+           bash test.bash git-lfs-cache --cache='{"filesystem": {"dir": "/tmp/cache"}}'
       - if: matrix.target == 'http'
         run: |
            sudo tee /etc/nginx/sites-enabled/default << 'EOD'
@@ -100,7 +100,7 @@ jobs:
            EOD
            mkdir /tmp/cache
            sudo systemctl restart nginx.service
-           bash check.bash git-lfs-cache --cache='{"http": {"endpoint": "http://localhost/"}}'
+           bash test.bash git-lfs-cache --cache='{"http": {"endpoint": "http://localhost/"}}'
   docker:
     if: github.ref == 'refs/heads/main'
     needs: cargo-build

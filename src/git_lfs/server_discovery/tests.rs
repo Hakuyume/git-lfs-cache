@@ -1,37 +1,58 @@
 use super::{server_discovery, Operation};
 use crate::git;
-use headers::{Authorization, HeaderMapExt};
+use headers::authorization::Basic;
+use headers::{Authorization, Header, HeaderMapExt};
 
-async fn init() -> anyhow::Result<tempfile::TempDir> {
+async fn init(
+    http_extraheader: bool,
+    credential_helper: bool,
+) -> anyhow::Result<tempfile::TempDir> {
     let temp_dir = tempfile::tempdir()?;
     git::spawn(&temp_dir, None, |command| command.arg("init")).await?;
 
-    let credentials = temp_dir.path().join(".git").join("credentials");
-    git::spawn(&temp_dir, None, |command| {
-        command
-            .arg("config")
-            .arg("--replace-all")
-            .arg("credential.helper")
-            .arg(format!("store --file={}", credentials.display()))
-    })
-    .await?;
-    git::spawn(
-        &temp_dir,
-        Some(b"protocol=https\nhost=git-server.com\nusername=qux\npassword=quux\n"),
-        |command| {
+    if http_extraheader {
+        let mut values = Vec::new();
+        Authorization::basic("qux", "quux").encode(&mut values);
+        for value in values {
+            let header = format!("{}: {}", Authorization::<Basic>::name(), value.to_str()?);
+            git::spawn(&temp_dir, None, |command| {
+                command
+                    .arg("config")
+                    .arg("http.https://git-server.com/.extraheader")
+                    .arg(header)
+            })
+            .await?;
+        }
+    }
+
+    if credential_helper {
+        let credentials = temp_dir.path().join(".git").join("credentials");
+        git::spawn(&temp_dir, None, |command| {
             command
-                .arg("credential-store")
-                .arg(format!("--file={}", credentials.display()))
-                .arg("store")
-        },
-    )
-    .await?;
+                .arg("config")
+                .arg("credential.helper")
+                .arg(format!("store --file={}", credentials.display()))
+        })
+        .await?;
+        git::spawn(
+            &temp_dir,
+            Some(b"protocol=https\nhost=git-server.com\nusername=corge\npassword=grault\n"),
+            |command| {
+                command
+                    .arg("credential-store")
+                    .arg(format!("--file={}", credentials.display()))
+                    .arg("store")
+            },
+        )
+        .await?;
+    }
+
     Ok(temp_dir)
 }
 
 #[tokio::test]
 async fn test_http() -> anyhow::Result<()> {
-    let temp_dir = init().await?;
+    let temp_dir = init(false, false).await?;
     git::spawn(&temp_dir, None, |command| {
         command
             .arg("remote")
@@ -48,7 +69,7 @@ async fn test_http() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_http_suffix() -> anyhow::Result<()> {
-    let temp_dir = init().await?;
+    let temp_dir = init(false, false).await?;
     git::spawn(&temp_dir, None, |command| {
         command
             .arg("remote")
@@ -65,7 +86,7 @@ async fn test_http_suffix() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_http_lfs_url() -> anyhow::Result<()> {
-    let temp_dir = init().await?;
+    let temp_dir = init(false, false).await?;
     git::spawn(&temp_dir, None, |command| {
         command
             .arg("config")
@@ -81,7 +102,7 @@ async fn test_http_lfs_url() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_http_remote_lfsurl() -> anyhow::Result<()> {
-    let temp_dir = init().await?;
+    let temp_dir = init(false, false).await?;
     git::spawn(&temp_dir, None, |command| {
         command
             .arg("config")
@@ -97,7 +118,7 @@ async fn test_http_remote_lfsurl() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_http_lfsconfig_lfs_url() -> anyhow::Result<()> {
-    let temp_dir = init().await?;
+    let temp_dir = init(false, false).await?;
     git::spawn(&temp_dir, None, |command| {
         command
             .arg("config")
@@ -114,7 +135,7 @@ async fn test_http_lfsconfig_lfs_url() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_http_lfsconfig_remote_lfsurl() -> anyhow::Result<()> {
-    let temp_dir = init().await?;
+    let temp_dir = init(false, false).await?;
     git::spawn(&temp_dir, None, |command| {
         command
             .arg("config")
@@ -130,8 +151,25 @@ async fn test_http_lfsconfig_remote_lfsurl() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_http_authorization() -> anyhow::Result<()> {
-    let temp_dir = init().await?;
+async fn test_http_authorization_http_extraheader() -> anyhow::Result<()> {
+    let temp_dir = init(true, false).await?;
+    git::spawn(&temp_dir, None, |command| {
+        command
+            .arg("remote")
+            .arg("add")
+            .arg("baz")
+            .arg("https://git-server.com/foo/bar")
+    })
+    .await?;
+    let response = server_discovery(&temp_dir, Operation::Upload, "baz", false).await?;
+    anyhow::ensure!(response.href == "https://git-server.com/foo/bar.git/info/lfs");
+    anyhow::ensure!(dbg!(response.header.typed_get()) == Some(Authorization::basic("qux", "quux")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_http_authorization_credential_helper() -> anyhow::Result<()> {
+    let temp_dir = init(false, true).await?;
     git::spawn(&temp_dir, None, |command| {
         command
             .arg("remote")
@@ -142,6 +180,23 @@ async fn test_http_authorization() -> anyhow::Result<()> {
     .await?;
     let response = server_discovery(&temp_dir, Operation::Upload, "baz", true).await?;
     anyhow::ensure!(response.href == "https://git-server.com/foo/bar.git/info/lfs");
-    anyhow::ensure!(response.header.typed_get() == Some(Authorization::basic("qux", "quux")));
+    anyhow::ensure!(response.header.typed_get() == Some(Authorization::basic("corge", "grault")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_http_authorization_both() -> anyhow::Result<()> {
+    let temp_dir = init(true, false).await?;
+    git::spawn(&temp_dir, None, |command| {
+        command
+            .arg("remote")
+            .arg("add")
+            .arg("baz")
+            .arg("https://git-server.com/foo/bar")
+    })
+    .await?;
+    let response = server_discovery(&temp_dir, Operation::Upload, "baz", false).await?;
+    anyhow::ensure!(response.href == "https://git-server.com/foo/bar.git/info/lfs");
+    anyhow::ensure!(dbg!(response.header.typed_get()) == Some(Authorization::basic("qux", "quux")));
     Ok(())
 }
