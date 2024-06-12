@@ -50,7 +50,7 @@ cd bar
 ${GIT_LFS_CACHE} install "${GIT_LFS_CACHE_OPTIONS[@]}"
 git lfs install --local
 git lfs pull
-cat .git/lfs-cache/logs/*.jsonl | jq .
+${GIT_LFS_CACHE} stats
 cd -
 
 kill ${LFS_TEST_SERVER_PID}
@@ -62,5 +62,5 @@ cd baz
 ${GIT_LFS_CACHE} install "${GIT_LFS_CACHE_OPTIONS[@]}"
 git lfs install --local
 git lfs pull
-cat .git/lfs-cache/logs/*.jsonl | jq .
+${GIT_LFS_CACHE} stats
 cd -
