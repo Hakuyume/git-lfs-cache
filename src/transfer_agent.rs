@@ -3,7 +3,7 @@ use bytes::Bytes;
 use clap::Parser;
 use futures::future::OptionFuture;
 use futures::{FutureExt, Stream, TryStreamExt};
-use http::{Request, StatusCode, Uri};
+use http::{Request, StatusCode};
 use http_body_util::{BodyExt, Empty};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -53,7 +53,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
             git_lfs::custom_transfers::Request::Init {
                 operation, remote, ..
             } => {
-                let error = context.init(operation, &remote).await.err().map(error);
+                let error = context.init(operation, remote).await.err().map(error);
                 stdout
                     .write(&git_lfs::custom_transfers::InitResponse { error })
                     .await?;
@@ -104,7 +104,7 @@ struct Context {
     logs: jsonl::Writer<File>,
     cache: Option<cache::Cache>,
     operation: Option<git_lfs::Operation>,
-    url: Option<Uri>,
+    remote: Option<String>,
     server_discovery: Option<Arc<git_lfs::server_discovery::Response>>,
 }
 
@@ -129,20 +129,15 @@ impl Context {
             logs: jsonl::Writer::new(File::from_std(logs)),
             cache,
             operation: None,
-            url: None,
+            remote: None,
             server_discovery: None,
         })
     }
 
     #[tracing::instrument(err, ret)]
-    async fn init(&mut self, operation: git_lfs::Operation, remote: &str) -> anyhow::Result<()> {
+    async fn init(&mut self, operation: git_lfs::Operation, remote: String) -> anyhow::Result<()> {
         self.operation = Some(operation);
-        let url = if let Ok(url) = git::remote_get_url(remote).await {
-            url
-        } else {
-            remote.parse()?
-        };
-        self.url = Some(url);
+        self.remote = Some(remote);
         Ok(())
     }
 
@@ -152,14 +147,14 @@ impl Context {
         if let Some(response) = self.server_discovery.clone() {
             Ok(response)
         } else {
-            let url = self
-                .url
-                .as_ref()
-                .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
             let operation = self
                 .operation
                 .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
-            let response = git_lfs::server_discovery(url, operation).await?;
+            let remote = self
+                .remote
+                .as_ref()
+                .ok_or_else(|| anyhow::format_err!("uninitialized"))?;
+            let response = git_lfs::server_discovery(operation, remote).await?;
             Ok(self.server_discovery.insert(Arc::new(response)).clone())
         }
     }

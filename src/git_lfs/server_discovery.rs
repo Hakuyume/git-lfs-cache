@@ -7,7 +7,12 @@ use http::{header, HeaderMap, HeaderName, HeaderValue, Uri};
 use secrecy::ExposeSecret;
 
 #[tracing::instrument(err, ret)]
-pub async fn server_discovery(url: &Uri, operation: Operation) -> anyhow::Result<Response> {
+pub async fn server_discovery(operation: Operation, remote: &str) -> anyhow::Result<Response> {
+    let url = if let Ok(url) = git::remote_get_url(remote).await {
+        url
+    } else {
+        remote.parse()?
+    };
     match url.scheme_str() {
         Some("http") | Some("https") => {
             let href = misc::patch_path(url.clone(), |path| {
@@ -37,7 +42,7 @@ pub async fn server_discovery(url: &Uri, operation: Operation) -> anyhow::Result
                     username: Some(username),
                     password: Some(password),
                     ..
-                }) = git::credential_fill(url).await
+                }) = git::credential_fill(&url).await
                 {
                     header.typed_insert(Authorization::basic(&username, password.expose_secret()));
                 }
