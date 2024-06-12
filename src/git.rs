@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::process::Command;
 
-pub async fn spawn<P, F>(current_dir: P, stdin: Option<&[u8]>, f: F) -> anyhow::Result<Vec<u8>>
+pub async fn spawn<P, F>(current_dir: P, stdin: Option<&[u8]>, f: F) -> anyhow::Result<String>
 where
     P: AsRef<Path>,
     F: FnOnce(&mut Command) -> &mut Command,
@@ -34,7 +34,7 @@ where
     let (output, _) = futures::future::try_join(child.wait_with_output(), copy).await?;
 
     if output.status.success() {
-        Ok(output.stdout)
+        Ok(String::from_utf8(output.stdout)?)
     } else {
         Err(anyhow::format_err!(
             String::from_utf8_lossy(&output.stderr).into_owned()
@@ -83,10 +83,7 @@ where
         f(command)
     })
     .await?;
-    Ok(String::from_utf8(stdout)?
-        .lines()
-        .map(ToString::to_string)
-        .collect())
+    Ok(stdout.lines().map(ToString::to_string).collect())
 }
 
 #[derive(Debug)]
@@ -118,8 +115,7 @@ where
     .await?;
 
     // https://git-scm.com/docs/git-credential#IOFMT
-    let outputs = String::from_utf8(stdout)?;
-    let outputs = outputs
+    let outputs = stdout
         .lines()
         .filter_map(|line| line.split_once('='))
         .collect::<HashMap<_, _>>();
@@ -141,7 +137,7 @@ where
         command.arg("remote").arg("get-url").arg(remote)
     })
     .await?;
-    Ok(String::from_utf8(stdout)?.trim().parse()?)
+    Ok(stdout.trim().parse()?)
 }
 
 #[tracing::instrument(err, ret)]
@@ -153,7 +149,7 @@ where
         command.arg("rev-parse").arg("--absolute-git-dir")
     })
     .await?;
-    Ok(String::from_utf8(stdout)?.trim().parse()?)
+    Ok(stdout.trim().parse()?)
 }
 
 #[tracing::instrument(err, ret)]
@@ -165,5 +161,5 @@ where
         command.arg("rev-parse").arg("--show-toplevel")
     })
     .await?;
-    Ok(String::from_utf8(stdout)?.trim().parse()?)
+    Ok(stdout.trim().parse()?)
 }
