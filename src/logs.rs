@@ -1,4 +1,5 @@
 use crate::{cache, git_lfs};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,8 @@ pub struct Line<'a> {
     pub oid: Cow<'a, str>,
     pub size: u64,
     pub cache: Option<cache::Source>,
+    pub start: DateTime<Utc>,
+    pub finish: DateTime<Utc>,
 }
 
 pub fn dir<P>(git_dir: P) -> PathBuf

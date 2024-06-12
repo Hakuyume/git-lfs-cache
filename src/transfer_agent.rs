@@ -1,5 +1,6 @@
 use crate::{cache, git, git_lfs, jsonl, logs, misc, writer};
 use bytes::Bytes;
+use chrono::Utc;
 use clap::Parser;
 use futures::future::OptionFuture;
 use futures::{FutureExt, Stream, TryStreamExt};
@@ -180,6 +181,8 @@ impl Context {
         size: u64,
         stdout: &mut jsonl::Writer<io::Stdout>,
     ) -> anyhow::Result<PathBuf> {
+        let start = Utc::now();
+
         let temp_dir = self.git_dir.join("lfs").join("tmp");
         fs::create_dir_all(&temp_dir).await?;
 
@@ -206,6 +209,8 @@ impl Context {
                             oid: Cow::Borrowed(oid),
                             size,
                             cache: Some(source),
+                            start,
+                            finish: Utc::now(),
                         })
                         .await?;
                     Some(path)
@@ -301,6 +306,8 @@ impl Context {
                                 oid: Cow::Borrowed(oid),
                                 size,
                                 cache: None,
+                                start,
+                                finish: Utc::now(),
                             })
                             .await?;
                         Ok(path)
