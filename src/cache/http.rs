@@ -2,31 +2,30 @@ use crate::{git_lfs, misc, writer};
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use headers::HeaderMapExt;
-use http::{header, Request, Uri};
+use http::{header, Request};
 use http_body::Frame;
 use http_body_util::{BodyExt, Empty, StreamBody};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 use tokio::fs;
+use url::Url;
 
 pub struct Cache {
     client: misc::Client,
-    endpoint: Uri,
+    endpoint: Url,
     authorization: Option<Authorization>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Opts {
-    #[serde(with = "http_serde::uri")]
-    endpoint: Uri,
+    endpoint: Url,
     authorization: Option<Authorization>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Source {
-    #[serde(with = "http_serde::uri")]
-    url: Uri,
+    url: Url,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -67,7 +66,7 @@ impl Cache {
     ) -> anyhow::Result<(PathBuf, Source)> {
         let url = self.url(oid)?;
 
-        let builder = Request::get(url.clone());
+        let builder = Request::get(url.as_ref());
         let builder = self.authorization(builder).await?;
         let request = builder.body(Empty::new().map_err(Box::from).boxed_unsync())?;
         let response = self.client.request(request).await?;
@@ -97,7 +96,7 @@ impl Cache {
     {
         let url = self.url(oid)?;
 
-        let builder = Request::put(url).header(header::CONTENT_LENGTH, size);
+        let builder = Request::put(url.as_ref()).header(header::CONTENT_LENGTH, size);
         let builder = self.authorization(builder).await?;
         let request = builder.body(
             BodyExt::map_err(StreamBody::new(body.map_ok(Frame::data)), |e| {
@@ -119,10 +118,12 @@ impl Cache {
         }
     }
 
-    fn url(&self, oid: &str) -> anyhow::Result<Uri> {
-        Ok(misc::patch_path(self.endpoint.clone(), |path| {
-            format!("{path}{oid}")
-        })?)
+    fn url(&self, oid: &str) -> anyhow::Result<Url> {
+        let mut url = self.endpoint.clone();
+        url.path_segments_mut()
+            .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
+            .push(oid);
+        Ok(url)
     }
 
     async fn authorization(

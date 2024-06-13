@@ -269,7 +269,7 @@ impl Context {
                     download: Some(download),
                     ..
                 } => {
-                    let builder = Request::get(download.href);
+                    let builder = Request::get(download.href.as_ref());
                     let builder = download
                         .header
                         .iter()

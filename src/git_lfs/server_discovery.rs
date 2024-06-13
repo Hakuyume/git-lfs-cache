@@ -1,13 +1,14 @@
 // https://github.com/git-lfs/git-lfs/blob/main/docs/api/server-discovery.md
 
 use super::Operation;
-use crate::{git, misc};
+use crate::git;
 use futures::TryFutureExt;
 use headers::{Authorization, HeaderMapExt};
-use http::{header, HeaderMap, HeaderName, HeaderValue, Uri};
+use http::{header, HeaderMap, HeaderName, HeaderValue};
 use secrecy::ExposeSecret;
 use std::fmt::Debug;
 use std::path::Path;
+use url::Url;
 
 #[tracing::instrument(err, ret)]
 pub async fn server_discovery<P>(
@@ -20,7 +21,7 @@ where
     P: AsRef<Path> + Debug,
 {
     let current_dir = current_dir.as_ref();
-    let (url, lfs) = if let Ok(Some(url)) = git::rev_parse_show_toplevel(current_dir)
+    let (url, custom) = if let Ok(Some(url)) = git::rev_parse_show_toplevel(current_dir)
         .and_then(|toplevel| async move {
             custom_configuration(
                 current_dir,
@@ -45,23 +46,15 @@ where
         (remote.parse()?, false)
     };
 
-    match url.scheme_str() {
-        Some("http") | Some("https") => {
-            let href = if lfs {
-                url
-            } else {
-                misc::patch_path(url, |path| {
-                    format!("{}.git/info/lfs", path.trim_end_matches(".git"))
-                })?
-            };
-
+    match url.scheme() {
+        "http" | "https" => {
             let mut header = HeaderMap::new();
             // thanks to @kmaehashi
             if let Ok(lines) = git::config(current_dir, &git::Location::default(), |command| {
                 command
                     .arg("--get-urlmatch")
                     .arg("http.extraheader")
-                    .arg(href.to_string())
+                    .arg(url.to_string())
             })
             .await
             {
@@ -78,22 +71,62 @@ where
                     username: Some(username),
                     password: Some(password),
                     ..
-                }) = git::credential_fill(current_dir, &href).await
+                }) = git::credential_fill(current_dir, &url).await
                 {
                     header.typed_insert(Authorization::basic(&username, password.expose_secret()));
                 }
             }
 
+            let href = if custom {
+                url
+            } else {
+                let mut href = url;
+                href.set_path(&format!("{}.git", href.path().trim_end_matches(".git")));
+                href.path_segments_mut()
+                    .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
+                    .push("info")
+                    .push("lfs");
+                href
+            };
+
             Ok(Response { href, header })
         }
-        // TODO: support ssh
+        "ssh" => {
+            if authorization {
+                todo!();
+            } else {
+                let href = if custom {
+                    url
+                } else {
+                    let mut href = Url::parse(&format!(
+                        "https://{}",
+                        url.host_str()
+                            .ok_or_else(|| anyhow::format_err!("missing host"))?
+                    ))?;
+                    href.set_port(url.port())
+                        .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?;
+                    href.set_path(url.path());
+
+                    href.set_path(&format!("{}.git", href.path().trim_end_matches(".git")));
+                    href.path_segments_mut()
+                        .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
+                        .push("info")
+                        .push("lfs");
+                    href
+                };
+                Ok(Response {
+                    href,
+                    header: HeaderMap::new(),
+                })
+            }
+        }
         _ => Err(anyhow::format_err!("unknown scheme")),
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Response {
-    pub href: Uri,
+    pub href: Url,
     pub header: HeaderMap,
 }
 
@@ -103,27 +136,30 @@ async fn custom_configuration<P>(
     current_dir: P,
     location: &git::Location,
     remote: &str,
-) -> anyhow::Result<Option<Uri>>
+) -> anyhow::Result<Option<Url>>
 where
     P: AsRef<Path> + Debug,
 {
     let current_dir = current_dir.as_ref();
-    if let Ok(lines) = git::config(current_dir, location, |command| {
+    let lines = if let Ok(lines) = git::config(current_dir, location, |command| {
         command.arg(format!("remote.{remote}.lfsurl"))
     })
     .await
     {
-        let [line] = lines
-            .try_into()
-            .map_err(|_| anyhow::format_err!("multiple lines"))?;
-        Ok(Some(line.parse()?))
+        Some(lines)
     } else if let Ok(lines) =
         git::config(current_dir, location, |command| command.arg("lfs.url")).await
     {
+        Some(lines)
+    } else {
+        None
+    };
+
+    if let Some(lines) = lines {
         let [line] = lines
             .try_into()
             .map_err(|_| anyhow::format_err!("multiple lines"))?;
-        Ok(Some(line.parse()?))
+        Ok(Some(git::parse_url(&line)?))
     } else {
         Ok(None)
     }
