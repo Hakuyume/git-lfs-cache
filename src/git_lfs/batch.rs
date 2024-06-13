@@ -2,20 +2,24 @@
 
 use super::{Error, Operation};
 use crate::misc;
-use http::{header, HeaderMap, Uri};
+use http::{header, HeaderMap};
 use http_body_util::{BodyExt, Full};
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 #[tracing::instrument(err, ret)]
 pub async fn batch(
     client: &misc::Client,
-    href: &Uri,
+    href: &Url,
     header: &HeaderMap,
     request: &Request<'_>,
 ) -> anyhow::Result<Response> {
-    let builder = http::Request::post(misc::patch_path(href.clone(), |path| {
-        format!("{}/objects/batch", path.trim_end_matches('/'))
-    })?);
+    let mut href = href.clone();
+    href.path_segments_mut()
+        .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
+        .push("objects")
+        .push("batch");
+    let builder = http::Request::post(href.as_ref());
     let builder = header.iter().fold(builder, |builder, (name, value)| {
         builder.header(name, value)
     });
@@ -81,8 +85,9 @@ pub struct Response {
 
 pub mod response {
     use super::super::Error;
-    use http::{HeaderMap, Uri};
+    use http::HeaderMap;
     use serde::Deserialize;
+    use url::Url;
 
     #[derive(Debug, Deserialize)]
     pub struct Object {
@@ -105,8 +110,7 @@ pub mod response {
 
     #[derive(Debug, Deserialize)]
     pub struct Action {
-        #[serde(default, with = "http_serde::uri")]
-        pub href: Uri,
+        pub href: Url,
         #[serde(default, with = "http_serde::header_map")]
         pub header: HeaderMap,
     }

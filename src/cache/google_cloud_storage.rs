@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fmt;
 use std::path::PathBuf;
+use url::Url;
 
 pub struct Cache {
     client: misc::Client,
@@ -103,11 +104,16 @@ impl Cache {
         let name = self.name(oid);
 
         // https://cloud.google.com/storage/docs/json_api/v1/objects/get
-        let builder = Request::get(format!(
-            "https://storage.googleapis.com/storage/v1/b/{}/o/{}?alt=media",
-            self.bucket,
-            urlencoding::encode(&name),
-        ));
+        let mut url = Url::parse_with_params(
+            "https://storage.googleapis.com/storage/v1/b",
+            [("alt", "media")],
+        )?;
+        url.path_segments_mut()
+            .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
+            .push(&self.bucket)
+            .push("o")
+            .push(&name);
+        let builder = Request::get(url.as_ref());
         let builder = self.authorization(builder).await?;
         let request = builder.body(Empty::new().map_err(Box::from).boxed_unsync())?;
         let response = self.client.request(request).await?;
@@ -142,12 +148,15 @@ impl Cache {
         anyhow::Error: From<E>,
     {
         // https://cloud.google.com/storage/docs/json_api/v1/objects/insert
-        let builder = Request::post(format!(
-            "https://storage.googleapis.com/upload/storage/v1/b/{}/o?uploadType=media&name={}",
-            self.bucket,
-            urlencoding::encode(&self.name(oid)),
-        ))
-        .header(header::CONTENT_LENGTH, size);
+        let mut url = Url::parse_with_params(
+            "https://storage.googleapis.com/upload/storage/v1/b",
+            [("uploadType", "media"), ("name", &self.name(oid))],
+        )?;
+        url.path_segments_mut()
+            .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
+            .push(&self.bucket)
+            .push("o");
+        let builder = Request::post(url.as_ref()).header(header::CONTENT_LENGTH, size);
         let builder = self.authorization(builder).await?;
         let request = builder.body(
             BodyExt::map_err(StreamBody::new(body.map_ok(Frame::data)), |e| {

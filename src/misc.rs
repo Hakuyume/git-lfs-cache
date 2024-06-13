@@ -5,6 +5,8 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use std::error;
 use std::io;
+use std::process::Stdio;
+use tokio::process::Command;
 
 pub type Client = hyper_util::client::legacy::Client<
     HttpsConnector<HttpConnector>,
@@ -20,24 +22,31 @@ pub fn client() -> Result<Client, io::Error> {
     Ok(hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(connector))
 }
 
-pub fn patch_path<F>(url: http::Uri, f: F) -> Result<http::Uri, http::Error>
-where
-    F: FnOnce(&str) -> String,
-{
-    let mut parts = url.into_parts();
+pub async fn spawn(command: &mut Command, stdin: Option<&[u8]>) -> anyhow::Result<Vec<u8>> {
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    tracing::info!(?command);
+    let mut child = command.spawn()?;
 
-    let (path, query) = if let Some(path_and_query) = &parts.path_and_query {
-        (path_and_query.path(), path_and_query.query())
-    } else {
-        ("", None)
+    let copy = {
+        let mut reader = stdin.unwrap_or_default();
+        let writer = child.stdin.take();
+        async move {
+            if let Some(mut writer) = writer {
+                tokio::io::copy(&mut reader, &mut writer).await?;
+            }
+            Ok(())
+        }
     };
-    let path = f(path);
-    let path_and_query = if let Some(query) = query {
-        format!("{path}?{query}")
-    } else {
-        path
-    };
-    parts.path_and_query = Some(path_and_query.parse()?);
 
-    Ok(http::Uri::from_parts(parts)?)
+    let (output, _) = futures::future::try_join(child.wait_with_output(), copy).await?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(anyhow::format_err!(
+            String::from_utf8_lossy(&output.stderr).into_owned()
+        ))
+    }
 }

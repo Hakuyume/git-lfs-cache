@@ -1,49 +1,11 @@
+use crate::misc;
 use clap::Parser;
-use http::Uri;
 use secrecy::Secret;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{Debug, Write};
-use std::iter;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use tokio::process::Command;
-
-pub async fn spawn<P, F>(current_dir: P, stdin: Option<&[u8]>, f: F) -> anyhow::Result<String>
-where
-    P: AsRef<Path>,
-    F: FnOnce(&mut Command) -> &mut Command,
-{
-    let mut command = Command::new("git");
-    command
-        .current_dir(current_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    f(&mut command);
-    tracing::info!(?command);
-    let mut child = command.spawn()?;
-
-    let copy = {
-        let mut reader = stdin.unwrap_or_default();
-        let writer = child.stdin.take();
-        async move {
-            if let Some(mut writer) = writer {
-                tokio::io::copy(&mut reader, &mut writer).await?;
-            }
-            Ok(())
-        }
-    };
-    let (output, _) = futures::future::try_join(child.wait_with_output(), copy).await?;
-
-    if output.status.success() {
-        Ok(String::from_utf8(output.stdout)?)
-    } else {
-        Err(anyhow::format_err!(
-            String::from_utf8_lossy(&output.stderr).into_owned()
-        ))
-    }
-}
+use url::Url;
 
 #[derive(Clone, Debug, Default, Parser)]
 #[group(multiple = false)]
@@ -66,27 +28,28 @@ where
     P: AsRef<Path> + Debug,
     F: FnOnce(&mut Command) -> &mut Command,
 {
-    let stdout = spawn(current_dir, None, |command| {
-        command.arg("config");
-        if location.system {
-            command.arg("--system");
-        }
-        if location.global {
-            command.arg("--global");
-        }
-        if location.local {
-            command.arg("--local");
-        }
-        if location.worktree {
-            command.arg("--worktree");
-        }
-        if let Some(file) = &location.file {
-            command.arg("--file").arg(file);
-        }
-        f(command)
-    })
-    .await?;
-    Ok(stdout.lines().map(ToString::to_string).collect())
+    let mut command = Command::new("git");
+    command.current_dir(current_dir).arg("config");
+    if location.system {
+        command.arg("--system");
+    }
+    if location.global {
+        command.arg("--global");
+    }
+    if location.local {
+        command.arg("--local");
+    }
+    if location.worktree {
+        command.arg("--worktree");
+    }
+    if let Some(file) = &location.file {
+        command.arg("--file").arg(file);
+    }
+    let stdout = misc::spawn(f(&mut command), None).await?;
+    Ok(String::from_utf8(stdout)?
+        .lines()
+        .map(ToString::to_string)
+        .collect())
 }
 
 #[derive(Debug)]
@@ -96,34 +59,33 @@ pub struct Credential {
 }
 
 #[tracing::instrument(err, ret)]
-pub async fn credential_fill<P>(current_dir: P, url: &Uri) -> anyhow::Result<Credential>
+pub async fn credential_fill<P>(current_dir: P, url: &Url) -> anyhow::Result<Credential>
 where
     P: AsRef<Path> + Debug,
 {
     // https://git-scm.com/docs/git-credential#IOFMT
-    let inputs = url
-        .scheme_str()
-        .map(|scheme| ("protocol", Cow::Borrowed(scheme)))
-        .into_iter()
-        .chain(
-            url.authority()
-                .map(|authority| ("host", Cow::Owned(authority.to_string()))),
-        )
-        .chain(iter::once((
-            "path",
-            Cow::Borrowed(url.path().trim_start_matches('/')),
-        )))
-        .fold(String::new(), |mut inputs, (key, value)| {
-            let _ = writeln!(inputs, "{key}={value}");
-            inputs
-        });
+    let inputs = [
+        ("protocol", url.scheme()),
+        ("host", url.authority()),
+        ("path", url.path().trim_start_matches('/')),
+    ]
+    .into_iter()
+    .fold(String::new(), |mut inputs, (key, value)| {
+        let _ = writeln!(inputs, "{key}={value}");
+        inputs
+    });
 
-    let stdout = spawn(current_dir, Some(inputs.as_bytes()), |command| {
-        command.arg("credential").arg("fill")
-    })
+    let stdout = misc::spawn(
+        Command::new("git")
+            .current_dir(current_dir)
+            .arg("credential")
+            .arg("fill"),
+        Some(inputs.as_bytes()),
+    )
     .await?;
 
     // https://git-scm.com/docs/git-credential#IOFMT
+    let stdout = String::from_utf8(stdout)?;
     let outputs = stdout
         .lines()
         .filter_map(|line| line.split_once('='))
@@ -137,16 +99,39 @@ where
     })
 }
 
-#[tracing::instrument(err, ret(Display))]
-pub async fn remote_get_url<P>(current_dir: P, remote: &str) -> anyhow::Result<Uri>
+#[tracing::instrument(err, ret)]
+pub fn parse_url(s: &str) -> anyhow::Result<Url> {
+    match s.parse() {
+        Ok(url) => Ok(url),
+        Err(e) => {
+            if let Some(Ok(url)) = s
+                .split_once(':')
+                .map(|(authority, path)| format!("ssh://{authority}/{path}").parse())
+            {
+                // scp-like syntax
+                Ok(url)
+            } else {
+                Err(e.into())
+            }
+        }
+    }
+}
+
+#[tracing::instrument(err, ret)]
+pub async fn remote_get_url<P>(current_dir: P, remote: &str) -> anyhow::Result<Url>
 where
     P: AsRef<Path> + Debug,
 {
-    let stdout = spawn(current_dir, None, |command| {
-        command.arg("remote").arg("get-url").arg(remote)
-    })
+    let stdout = misc::spawn(
+        Command::new("git")
+            .current_dir(current_dir)
+            .arg("remote")
+            .arg("get-url")
+            .arg(remote),
+        None,
+    )
     .await?;
-    Ok(stdout.trim().parse()?)
+    parse_url(String::from_utf8(stdout)?.trim())
 }
 
 #[tracing::instrument(err, ret)]
@@ -154,11 +139,15 @@ pub async fn rev_parse_absolute_git_dir<P>(current_dir: P) -> anyhow::Result<Pat
 where
     P: AsRef<Path> + Debug,
 {
-    let stdout = spawn(current_dir, None, |command| {
-        command.arg("rev-parse").arg("--absolute-git-dir")
-    })
+    let stdout = misc::spawn(
+        Command::new("git")
+            .current_dir(current_dir)
+            .arg("rev-parse")
+            .arg("--absolute-git-dir"),
+        None,
+    )
     .await?;
-    Ok(stdout.trim().parse()?)
+    Ok(String::from_utf8(stdout)?.trim().parse()?)
 }
 
 #[tracing::instrument(err, ret)]
@@ -166,9 +155,13 @@ pub async fn rev_parse_show_toplevel<P>(current_dir: P) -> anyhow::Result<PathBu
 where
     P: AsRef<Path> + Debug,
 {
-    let stdout = spawn(current_dir, None, |command| {
-        command.arg("rev-parse").arg("--show-toplevel")
-    })
+    let stdout = misc::spawn(
+        Command::new("git")
+            .current_dir(current_dir)
+            .arg("rev-parse")
+            .arg("--show-toplevel"),
+        None,
+    )
     .await?;
-    Ok(stdout.trim().parse()?)
+    Ok(String::from_utf8(stdout)?.trim().parse()?)
 }
