@@ -46,7 +46,7 @@ where
     } else if let Ok(url) = git::remote_get_url(current_dir, remote).await {
         (url, false)
     } else {
-        (remote.parse()?, false)
+        (git::parse_url(remote)?, false)
     };
 
     match url.scheme() {
