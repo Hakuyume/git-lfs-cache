@@ -45,8 +45,9 @@ jobs:
   cargo-build:
     strategy:
       matrix:
-        target:
+        platform:
           - linux-amd64
+          - linux-arm64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,15 +61,23 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - if: matrix.platform == 'linux-amd64'
+        run: |
+           sudo apt-get install --no-install-recommends --yes musl-tools
+           echo CARGO_BUILD_TARGET=x86_64-unknown-linux-musl >> ${GITHUB_ENV}
+      - if: matrix.platform == 'linux-arm64'
+        run: |
+           sudo apt-get install --no-install-recommends --yes gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+           echo CARGO_BUILD_TARGET=aarch64-unknown-linux-musl >> ${GITHUB_ENV}
+           echo CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc >> ${GITHUB_ENV}
       - run: |
-          sudo apt-get install --no-install-recommends --yes musl-tools
-          rustup target add x86_64-unknown-linux-musl
-          cargo build --release --target=x86_64-unknown-linux-musl
-          upx target/x86_64-unknown-linux-musl/release/git-lfs-cache
+          rustup target add ${{ env.CARGO_BUILD_TARGET }}
+          cargo build --release
+          upx target/${{ env.CARGO_BUILD_TARGET }}/release/git-lfs-cache
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
-          path: target/x86_64-unknown-linux-musl/release/git-lfs-cache
+          name: ${{ matrix.platform }}
+          path: target/${{ env.CARGO_BUILD_TARGET }}/release/git-lfs-cache
   test:
     needs: cargo-build
     strategy:
