@@ -34,11 +34,11 @@ pub async fn batch(
         Ok(serde_json::from_slice(&body)?)
     } else {
         #[derive(Deserialize)]
-        struct E {
+        struct B {
             message: String,
         }
 
-        let message = if let Ok(E { message }) = serde_json::from_slice(&body) {
+        let message = if let Ok(B { message }) = serde_json::from_slice(&body) {
             message
         } else {
             format!("{body:?}")
