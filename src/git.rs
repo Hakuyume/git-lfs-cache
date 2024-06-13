@@ -20,7 +20,9 @@ where
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = f(&mut command).spawn()?;
+    f(&mut command);
+    tracing::info!(?command);
+    let mut child = command.spawn()?;
 
     let copy = {
         let mut reader = stdin.unwrap_or_default();
