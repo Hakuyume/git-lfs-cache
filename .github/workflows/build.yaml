@@ -63,13 +63,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - if: matrix.platform == 'linux-amd64'
         run: |
-           sudo apt-get install --no-install-recommends --yes musl-tools
-           echo CARGO_BUILD_TARGET=x86_64-unknown-linux-musl >> ${GITHUB_ENV}
+          sudo apt-get install --no-install-recommends --yes musl-tools
+          echo CARGO_BUILD_TARGET=x86_64-unknown-linux-musl >> ${GITHUB_ENV}
       - if: matrix.platform == 'linux-arm64'
         run: |
-           sudo apt-get install --no-install-recommends --yes gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-           echo CARGO_BUILD_TARGET=aarch64-unknown-linux-musl >> ${GITHUB_ENV}
-           echo CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc >> ${GITHUB_ENV}
+          sudo apt-get install --no-install-recommends --yes gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          echo CARGO_BUILD_TARGET=aarch64-unknown-linux-musl >> ${GITHUB_ENV}
+          echo CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc >> ${GITHUB_ENV}
       - run: |
           rustup target add ${{ env.CARGO_BUILD_TARGET }}
           cargo build --release
@@ -94,22 +94,22 @@ jobs:
       - run: chmod +x git-lfs-cache
       - if: matrix.target == 'filesystem'
         run: |
-           bash test.bash git-lfs-cache --cache='{"filesystem": {"dir": "/tmp/cache"}}'
+          bash test.bash git-lfs-cache --cache='{"filesystem": {"dir": "/tmp/cache"}}'
       - if: matrix.target == 'http'
         run: |
-           sudo tee /etc/nginx/sites-enabled/default << 'EOD'
-           server {
-             listen 80 default_server;
-             listen [::]:80 default_server;
-             location / {
-                alias /tmp/cache;
-                dav_methods PUT;
-             }
-           }
-           EOD
-           mkdir /tmp/cache
-           sudo systemctl restart nginx.service
-           bash test.bash git-lfs-cache --cache='{"http": {"endpoint": "http://localhost/"}}'
+          sudo tee /etc/nginx/sites-enabled/default << 'EOD'
+          server {
+            listen 80 default_server;
+            listen [::]:80 default_server;
+            location / {
+               alias /tmp/cache;
+               dav_methods PUT;
+            }
+          }
+          EOD
+          mkdir /tmp/cache
+          sudo systemctl restart nginx.service
+          bash test.bash git-lfs-cache --cache='{"http": {"endpoint": "http://localhost/"}}'
   docker:
     needs: cargo-build
     runs-on: ubuntu-latest
