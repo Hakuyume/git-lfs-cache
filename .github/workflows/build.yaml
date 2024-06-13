@@ -187,4 +187,4 @@ jobs:
             ]
           }
           EOD
-          oras manifest push ghcr.io/hakuyume/${{ env.REPOSITORY }}:${{ github.sha }}-oras,oras manifest.json
+          oras manifest push ${{ env.REPOSITORY }}:${{ github.sha }}-oras,oras manifest.json
