@@ -1,13 +1,16 @@
 // https://github.com/git-lfs/git-lfs/blob/main/docs/api/server-discovery.md
 
 use super::Operation;
-use crate::git;
+use crate::{git, misc};
 use futures::TryFutureExt;
 use headers::{Authorization, HeaderMapExt};
 use http::{header, HeaderMap, HeaderName, HeaderValue};
 use secrecy::ExposeSecret;
+use serde::Deserialize;
+use std::env;
 use std::fmt::Debug;
 use std::path::Path;
+use tokio::process::Command;
 use url::Url;
 
 #[tracing::instrument(err, ret)]
@@ -93,7 +96,34 @@ where
         }
         "ssh" => {
             if authorization {
-                todo!();
+                let ssh_command = env::var("GIT_SSH_COMMAND").ok();
+                let mut ssh_command = shlex::Shlex::new(ssh_command.as_deref().unwrap_or("ssh"));
+                let mut command = Command::new(
+                    ssh_command
+                        .next()
+                        .ok_or_else(|| anyhow::format_err!("missing program"))?,
+                );
+                command.args(ssh_command);
+                command.current_dir(current_dir);
+                if !url.username().is_empty() {
+                    command.arg("-l").arg(url.username());
+                }
+                if let Some(port) = url.port() {
+                    command.arg("-p").arg(port.to_string());
+                }
+                command
+                    .arg(
+                        url.host_str()
+                            .ok_or_else(|| anyhow::format_err!("missing host"))?,
+                    )
+                    .arg("git-lfs-authenticate")
+                    .arg(url.path())
+                    .arg(match operation {
+                        Operation::Upload => "upload",
+                        Operation::Download => "download",
+                    });
+                let stdout = misc::spawn(&mut command, None).await?;
+                Ok(dbg!(serde_json::from_slice(&stdout)?))
             } else {
                 let href = if custom {
                     url
@@ -124,9 +154,10 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Response {
     pub href: Url,
+    #[serde(with = "http_serde::header_map")]
     pub header: HeaderMap,
 }
 

@@ -2,6 +2,8 @@ use super::{server_discovery, Operation};
 use crate::misc;
 use headers::authorization::Basic;
 use headers::{Authorization, Header, HeaderMapExt};
+use http::HeaderValue;
+use std::env;
 use tokio::process::Command;
 
 async fn init(
@@ -50,6 +52,16 @@ async fn init(
         )
         .await?;
     }
+
+    env::set_var(
+        "GIT_SSH_COMMAND",
+        concat!(
+            "jq --args --null-input ",
+            r#"'{href: "https://git-server.com/foo/bar.git/info/lfs", "#,
+            r#"header: ($ARGS.positional | to_entries | map({(.key | tostring): .value}) | add)}' "#,
+            "--",
+        ),
+    );
 
     Ok(temp_dir)
 }
@@ -219,7 +231,7 @@ async fn test_http_authorization_both() -> anyhow::Result<()> {
     .await?;
     let response = server_discovery(&temp_dir, Operation::Upload, "baz", false).await?;
     anyhow::ensure!(response.href.as_ref() == "https://git-server.com/foo/bar.git/info/lfs");
-    anyhow::ensure!(dbg!(response.header.typed_get()) == Some(Authorization::basic("qux", "quux")));
+    anyhow::ensure!(response.header.typed_get() == Some(Authorization::basic("qux", "quux")));
     Ok(())
 }
 
@@ -257,6 +269,35 @@ async fn test_ssh() -> anyhow::Result<()> {
     .await?;
     let response = server_discovery(&temp_dir, Operation::Upload, "baz", false).await?;
     anyhow::ensure!(response.href.as_ref() == "https://git-server.com/foo/bar.git/info/lfs");
+    anyhow::ensure!(response.header.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ssh_authorization() -> anyhow::Result<()> {
+    let temp_dir = init(false, false).await?;
+    misc::spawn(
+        Command::new("git")
+            .current_dir(&temp_dir)
+            .arg("remote")
+            .arg("add")
+            .arg("baz")
+            .arg("git@git-server.com:foo/bar.git"),
+        None,
+    )
+    .await?;
+    let mut response = server_discovery(&temp_dir, Operation::Upload, "baz", true).await?;
+    anyhow::ensure!(response.href.as_ref() == "https://git-server.com/foo/bar.git/info/lfs");
+    anyhow::ensure!(response.header.remove("0") == Some(HeaderValue::from_static("-l")));
+    anyhow::ensure!(response.header.remove("1") == Some(HeaderValue::from_static("git")));
+    anyhow::ensure!(
+        response.header.remove("2") == Some(HeaderValue::from_static("git-server.com"))
+    );
+    anyhow::ensure!(
+        response.header.remove("3") == Some(HeaderValue::from_static("git-lfs-authenticate"))
+    );
+    anyhow::ensure!(response.header.remove("4") == Some(HeaderValue::from_static("/foo/bar.git")));
+    anyhow::ensure!(response.header.remove("5") == Some(HeaderValue::from_static("upload")));
     anyhow::ensure!(response.header.is_empty());
     Ok(())
 }
