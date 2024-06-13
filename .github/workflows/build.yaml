@@ -142,20 +142,49 @@ jobs:
             ghcr.io/hakuyume/git-lfs-cache:${{ github.sha }}
             ghcr.io/hakuyume/git-lfs-cache
   oras:
-    if: github.ref == 'refs/heads/main'
     needs: cargo-build
     runs-on: ubuntu-latest
     permissions:
       packages: write
     steps:
       - uses: actions/download-artifact@v4
-        with:
-          name: linux-amd64
-      - uses: docker/login-action@v3
+      - if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - if: github.ref == 'refs/heads/main'
+        run: echo REPOSITORY=ghcr.io/hakuyume/git-lfs-cache >> ${GITHUB_ENV}
+      - if: github.ref != 'refs/heads/main'
+        run: |
+          docker run --detach --publish=5000:5000 ghcr.io/distribution/distribution:edge
+          echo REPOSITORY=localhost:5000/temp >> ${GITHUB_ENV}
       - run: |
-          oras push ghcr.io/hakuyume/git-lfs-cache:${{ github.sha }}-oras git-lfs-cache
-          oras push ghcr.io/hakuyume/git-lfs-cache:oras git-lfs-cache
+          for PLATFORM in linux-amd64 linux-arm64
+          do
+              (cd ${PLATFORM} && oras push --export-manifest=manifest.json ${{ env.REPOSITORY }} git-lfs-cache)
+          done
+          jq --compact-output << EOD | tee manifest.json
+          {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+              {
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "artifactType": "application/vnd.unknown.artifact.v1",
+                "digest": "sha256:$(sha256sum linux-amd64/manifest.json | head --bytes=64)",
+                "size": $(cat linux-amd64/manifest.json | wc --bytes),
+                "platform": {"os": "linux", "architecture": "amd64"}
+              },
+              {
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "artifactType": "application/vnd.unknown.artifact.v1",
+                "digest": "sha256:$(sha256sum linux-arm64/manifest.json | head --bytes=64)",
+                "size": $(cat linux-arm64/manifest.json | wc --bytes),
+                "platform": {"os": "linux", "architecture": "arm64"}
+              }
+            ]
+          }
+          EOD
+          oras manifest push ghcr.io/hakuyume/${{ env.REPOSITORY }}:${{ github.sha }}-oras,oras manifest.json
