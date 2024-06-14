@@ -274,7 +274,7 @@ async fn test_ssh() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_ssh_authorization() -> anyhow::Result<()> {
+async fn test_git_authorization() -> anyhow::Result<()> {
     let temp_dir = init(false, false).await?;
     misc::spawn(
         Command::new("git")
@@ -298,6 +298,37 @@ async fn test_ssh_authorization() -> anyhow::Result<()> {
     );
     anyhow::ensure!(response.header.remove("4") == Some(HeaderValue::from_static("/foo/bar.git")));
     anyhow::ensure!(response.header.remove("5") == Some(HeaderValue::from_static("upload")));
+    anyhow::ensure!(response.header.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ssh_authorization() -> anyhow::Result<()> {
+    let temp_dir = init(false, false).await?;
+    misc::spawn(
+        Command::new("git")
+            .current_dir(&temp_dir)
+            .arg("remote")
+            .arg("add")
+            .arg("baz")
+            .arg("ssh://git@git-server.com:8022/foo/bar.git"),
+        None,
+    )
+    .await?;
+    let mut response = server_discovery(&temp_dir, Operation::Upload, "baz", true).await?;
+    anyhow::ensure!(response.href.as_ref() == "https://git-server.com/foo/bar.git/info/lfs");
+    anyhow::ensure!(response.header.remove("0") == Some(HeaderValue::from_static("-l")));
+    anyhow::ensure!(response.header.remove("1") == Some(HeaderValue::from_static("git")));
+    anyhow::ensure!(response.header.remove("2") == Some(HeaderValue::from_static("-p")));
+    anyhow::ensure!(response.header.remove("3") == Some(HeaderValue::from_static("8022")));
+    anyhow::ensure!(
+        response.header.remove("4") == Some(HeaderValue::from_static("git-server.com"))
+    );
+    anyhow::ensure!(
+        response.header.remove("5") == Some(HeaderValue::from_static("git-lfs-authenticate"))
+    );
+    anyhow::ensure!(response.header.remove("6") == Some(HeaderValue::from_static("/foo/bar.git")));
+    anyhow::ensure!(response.header.remove("7") == Some(HeaderValue::from_static("upload")));
     anyhow::ensure!(response.header.is_empty());
     Ok(())
 }
