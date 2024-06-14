@@ -92,6 +92,7 @@ pub mod response {
     #[derive(Debug, Deserialize)]
     pub struct Object {
         pub oid: String,
+        #[allow(dead_code)]
         pub size: u64,
         #[serde(flatten)]
         pub inner: Inner,
@@ -101,7 +102,9 @@ pub mod response {
     #[serde(rename_all = "lowercase")]
     pub enum Inner {
         Actions {
+            #[allow(dead_code)]
             upload: Option<Action>,
+            #[allow(dead_code)]
             verify: Option<Action>,
             download: Option<Action>,
         },

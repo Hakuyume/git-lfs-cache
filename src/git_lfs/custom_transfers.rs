@@ -10,12 +10,16 @@ pub enum Request {
     Init {
         operation: Operation,
         remote: String,
+        #[allow(dead_code)]
         concurrent: bool,
+        #[allow(dead_code)]
         concurrenttransfers: usize,
     },
     Upload {
         oid: String,
+        #[allow(dead_code)]
         size: u64,
+        #[allow(dead_code)]
         path: PathBuf,
     },
     Download {
