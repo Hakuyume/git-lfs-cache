@@ -193,7 +193,7 @@ async fn test_http_authorization_http_extraheader() -> anyhow::Result<()> {
     .await?;
     let response = server_discovery(&temp_dir, Operation::Upload, "baz", false).await?;
     anyhow::ensure!(response.href.as_ref() == "https://git-server.com/foo/bar.git/info/lfs");
-    anyhow::ensure!(dbg!(response.header.typed_get()) == Some(Authorization::basic("qux", "quux")));
+    anyhow::ensure!(response.header.typed_get() == Some(Authorization::basic("qux", "quux")));
     Ok(())
 }
 

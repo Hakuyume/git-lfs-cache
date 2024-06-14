@@ -123,7 +123,7 @@ where
                         Operation::Download => "download",
                     });
                 let stdout = misc::spawn(&mut command, None).await?;
-                Ok(dbg!(serde_json::from_slice(&stdout)?))
+                Ok(serde_json::from_slice(&stdout)?)
             } else {
                 let href = if custom {
                     url
