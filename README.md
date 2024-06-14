@@ -8,7 +8,7 @@ $ git lfs pull
 $ git lfs-cache stats
 ```
 
-### cache backends
+### supported backends
 - filesystem
 - google_cloud_storage
 - http
