@@ -78,38 +78,6 @@ jobs:
         with:
           name: ${{ matrix.platform }}
           path: target/${{ env.CARGO_BUILD_TARGET }}/release/git-lfs-cache
-  test:
-    needs: cargo-build
-    strategy:
-      matrix:
-        target:
-          - filesystem
-          - http
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: linux-amd64
-      - run: chmod +x git-lfs-cache
-      - if: matrix.target == 'filesystem'
-        run: |
-          bash test.bash git-lfs-cache --cache='{"filesystem": {"dir": "/tmp/cache"}}'
-      - if: matrix.target == 'http'
-        run: |
-          sudo tee /etc/nginx/sites-enabled/default << 'EOD'
-          server {
-            listen 80 default_server;
-            listen [::]:80 default_server;
-            location / {
-               alias /tmp/cache;
-               dav_methods PUT;
-            }
-          }
-          EOD
-          mkdir /tmp/cache
-          sudo systemctl restart nginx.service
-          bash test.bash git-lfs-cache --cache='{"http": {"endpoint": "http://localhost/"}}'
   docker:
     needs: cargo-build
     runs-on: ubuntu-latest
@@ -188,3 +156,35 @@ jobs:
           }
           EOD
           oras manifest push ${{ env.REPOSITORY }}:${{ github.sha }}-oras,oras manifest.json
+  test:
+    needs: cargo-build
+    strategy:
+      matrix:
+        target:
+          - filesystem
+          - http
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-amd64
+      - run: chmod +x git-lfs-cache
+      - if: matrix.target == 'filesystem'
+        run: |
+          bash test.bash git-lfs-cache --cache='{"filesystem": {"dir": "/tmp/cache"}}'
+      - if: matrix.target == 'http'
+        run: |
+          sudo tee /etc/nginx/sites-enabled/default << 'EOD'
+          server {
+            listen 80 default_server;
+            listen [::]:80 default_server;
+            location / {
+               alias /tmp/cache;
+               dav_methods PUT;
+            }
+          }
+          EOD
+          mkdir /tmp/cache
+          sudo systemctl restart nginx.service
+          bash test.bash git-lfs-cache --cache='{"http": {"endpoint": "http://localhost/"}}'
