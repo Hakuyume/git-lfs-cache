@@ -15,8 +15,7 @@ pub async fn batch(
     request: &Request<'_>,
 ) -> anyhow::Result<Response> {
     let mut href = href.clone();
-    href.path_segments_mut()
-        .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
+    misc::path_segments_mut(&mut href)?
         .push("objects")
         .push("batch");
     let builder = http::Request::post(href.as_ref());

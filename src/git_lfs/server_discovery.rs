@@ -85,10 +85,7 @@ where
             } else {
                 let mut href = url;
                 href.set_path(&format!("{}.git", href.path().trim_end_matches(".git")));
-                href.path_segments_mut()
-                    .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
-                    .push("info")
-                    .push("lfs");
+                misc::path_segments_mut(&mut href)?.push("info").push("lfs");
                 href
             };
 
@@ -138,10 +135,7 @@ where
                     href.set_path(url.path());
 
                     href.set_path(&format!("{}.git", href.path().trim_end_matches(".git")));
-                    href.path_segments_mut()
-                        .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
-                        .push("info")
-                        .push("lfs");
+                    misc::path_segments_mut(&mut href)?.push("info").push("lfs");
                     href
                 };
                 Ok(Response {

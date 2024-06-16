@@ -120,9 +120,7 @@ impl Cache {
 
     fn url(&self, oid: &str) -> anyhow::Result<Url> {
         let mut url = self.endpoint.clone();
-        url.path_segments_mut()
-            .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
-            .push(oid);
+        misc::path_segments_mut(&mut url)?.push(oid);
         Ok(url)
     }
 

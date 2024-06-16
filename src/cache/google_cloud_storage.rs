@@ -108,8 +108,7 @@ impl Cache {
             "https://storage.googleapis.com/storage/v1/b",
             [("alt", "media")],
         )?;
-        url.path_segments_mut()
-            .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
+        misc::path_segments_mut(&mut url)?
             .push(&self.bucket)
             .push("o")
             .push(&name);
@@ -152,8 +151,7 @@ impl Cache {
             "https://storage.googleapis.com/upload/storage/v1/b",
             [("uploadType", "media"), ("name", &self.name(oid))],
         )?;
-        url.path_segments_mut()
-            .map_err(|_| anyhow::format_err!("cannot-be-a-base"))?
+        misc::path_segments_mut(&mut url)?
             .push(&self.bucket)
             .push("o");
         let builder = Request::post(url.as_ref()).header(header::CONTENT_LENGTH, size);

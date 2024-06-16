@@ -7,6 +7,7 @@ use std::error;
 use std::io;
 use std::process::Stdio;
 use tokio::process::Command;
+use url::{PathSegmentsMut, Url};
 
 pub type Client = hyper_util::client::legacy::Client<
     HttpsConnector<HttpConnector>,
@@ -49,4 +50,12 @@ pub async fn spawn(command: &mut Command, stdin: Option<&[u8]>) -> anyhow::Resul
             String::from_utf8_lossy(&output.stderr).into_owned()
         ))
     }
+}
+
+pub fn path_segments_mut(url: &mut Url) -> anyhow::Result<PathSegmentsMut<'_>> {
+    let mut path_segments = url
+        .path_segments_mut()
+        .map_err(|_| anyhow::format_err!("cannot be base"))?;
+    path_segments.pop_if_empty();
+    Ok(path_segments)
 }
