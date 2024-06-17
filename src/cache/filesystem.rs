@@ -1,4 +1,4 @@
-use crate::writer;
+use crate::channel;
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use serde::{Deserialize, Serialize};
@@ -35,8 +35,8 @@ impl Cache {
         &self,
         oid: &str,
         size: u64,
-        mut writer: writer::Writer,
-    ) -> anyhow::Result<(PathBuf, Source)> {
+        mut writer: channel::Writer<'_>,
+    ) -> anyhow::Result<Source> {
         let path = self.path(oid);
         let mut reader = BufReader::new(File::open(&path).await?);
         loop {
@@ -49,7 +49,8 @@ impl Cache {
                 reader.consume(len);
             }
         }
-        Ok((writer.finish().await?, Source { path }))
+        writer.finish().await?;
+        Ok(Source { path })
     }
 
     #[tracing::instrument(err, ret, skip(body))]
@@ -64,14 +65,15 @@ impl Cache {
             .parent()
             .ok_or_else(|| anyhow::format_err!("missing parent"))?;
         fs::create_dir_all(&parent).await?;
-        let mut writer = writer::new_in(&parent).await?;
+        let mut channel = channel::new_in(parent)?;
+        let (mut writer, _) = channel.init()?;
 
         let mut body = pin::pin!(body);
         while let Some(data) = body.try_next().await? {
             writer.write(&data).await?;
         }
-
-        fs::rename(writer.finish().await?, path).await?;
+        writer.finish().await?;
+        fs::rename(channel.keep()?, path).await?;
         Ok(())
     }
 

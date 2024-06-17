@@ -2,11 +2,10 @@ mod filesystem;
 mod google_cloud_storage;
 mod http;
 
-use crate::writer;
+use crate::channel;
 use bytes::Bytes;
 use futures::{Stream, TryFutureExt};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::str::FromStr;
 
 #[derive(Debug)]
@@ -56,27 +55,22 @@ impl Cache {
         &self,
         oid: &str,
         size: u64,
-        writer: writer::Writer,
-    ) -> anyhow::Result<(PathBuf, Source)> {
+        writer: channel::Writer<'_>,
+    ) -> anyhow::Result<Source> {
         match self {
             Self::Filesystem(cache) => {
                 cache
                     .get(oid, size, writer)
-                    .map_ok(|(path, source)| (path, Source::Filesystem(source)))
+                    .map_ok(Source::Filesystem)
                     .await
             }
             Self::GoogleCloudStorage(cache) => {
                 cache
                     .get(oid, size, writer)
-                    .map_ok(|(path, source)| (path, Source::GoogleCloudStorage(source)))
+                    .map_ok(Source::GoogleCloudStorage)
                     .await
             }
-            Self::Http(cache) => {
-                cache
-                    .get(oid, size, writer)
-                    .map_ok(|(path, source)| (path, Source::Http(source)))
-                    .await
-            }
+            Self::Http(cache) => cache.get(oid, size, writer).map_ok(Source::Http).await,
         }
     }
 

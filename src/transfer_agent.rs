@@ -1,9 +1,8 @@
-use crate::{cache, git, git_lfs, jsonl, logs, misc, writer};
+use crate::{cache, channel, git, git_lfs, jsonl, logs, misc};
 use bytes::Bytes;
 use chrono::Utc;
 use clap::Parser;
-use futures::future::OptionFuture;
-use futures::{FutureExt, Stream, TryStreamExt};
+use futures::{Stream, TryStreamExt};
 use http::{Request, StatusCode};
 use http_body_util::{BodyExt, Empty};
 use sha2::{Digest, Sha256};
@@ -187,39 +186,37 @@ impl Context {
         fs::create_dir_all(&temp_dir).await?;
 
         let path = if let Some(cache) = &self.cache {
-            let writer = writer::new_in(&temp_dir).await?;
-            let check = {
-                let body = writer.subscribe().await?;
-                async move {
+            let mut channel = channel::new_in(&temp_dir)?;
+            let (writer, reader) = channel.init()?;
+            if let Ok((source, _, _)) = futures::future::try_join3(
+                cache.get(oid, size, writer),
+                async {
                     let mut hasher = Sha256::new();
-                    let mut body = pin::pin!(body);
+                    let mut body = pin::pin!(reader.stream()?);
                     while let Some(data) = body.try_next().await? {
                         hasher.update(data);
                     }
                     anyhow::ensure!(oid == hex::encode(hasher.finalize()));
                     Ok(())
-                }
-            };
-            let progress = progress(oid, writer.subscribe().await?, &mut *stdout);
-            match futures::future::join3(cache.get(oid, size, writer), check, progress).await {
-                (Ok((path, source)), Ok(_), _) => {
-                    self.logs
-                        .write(&logs::Line {
-                            operation: git_lfs::Operation::Download,
-                            oid: Cow::Borrowed(oid),
-                            size,
-                            cache: Some(source),
-                            start,
-                            finish: Utc::now(),
-                        })
-                        .await?;
-                    Some(path)
-                }
-                (Ok((path, _)), _, _) => {
-                    fs::remove_file(path).await?;
-                    None
-                }
-                _ => None,
+                },
+                progress(oid, reader.stream()?, &mut *stdout),
+            )
+            .await
+            {
+                let path = channel.keep()?;
+                self.logs
+                    .write(&logs::Line {
+                        operation: git_lfs::Operation::Download,
+                        oid: Cow::Borrowed(oid),
+                        size,
+                        cache: Some(source),
+                        start,
+                        finish: Utc::now(),
+                    })
+                    .await?;
+                Some(path)
+            } else {
+                None
             }
         } else {
             None
@@ -280,14 +277,9 @@ impl Context {
                     let response = self.client.request(request).await?;
                     let (parts, mut body) = response.into_parts();
                     if parts.status.is_success() {
-                        let mut writer = writer::new_in(&temp_dir).await?;
-                        let put = if let Some(cache) = &self.cache {
-                            Some(cache.put(oid, size, writer.subscribe().await?))
-                        } else {
-                            None
-                        };
-                        let progress = progress(oid, writer.subscribe().await?, &mut *stdout);
-                        let (path, _, _) = futures::future::try_join3(
+                        let mut channel = channel::new_in(&temp_dir)?;
+                        let (mut writer, reader) = channel.init()?;
+                        futures::future::try_join3(
                             async {
                                 while let Some(frame) = body.frame().await.transpose()? {
                                     if let Ok(data) = frame.into_data() {
@@ -296,10 +288,16 @@ impl Context {
                                 }
                                 Ok(writer.finish().await?)
                             },
-                            OptionFuture::from(put).map(Option::transpose),
-                            progress,
+                            async {
+                                if let Some(cache) = &self.cache {
+                                    cache.put(oid, size, reader.stream()?).await?;
+                                }
+                                Ok(())
+                            },
+                            progress(oid, reader.stream()?, &mut *stdout),
                         )
                         .await?;
+                        let path = channel.keep()?;
                         self.logs
                             .write(&logs::Line {
                                 operation: git_lfs::Operation::Download,

@@ -1,4 +1,4 @@
-use crate::{git_lfs, misc, writer};
+use crate::{channel, git_lfs, misc};
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use headers::HeaderMapExt;
@@ -8,7 +8,6 @@ use http_body_util::{BodyExt, Empty, StreamBody};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fmt;
-use std::path::PathBuf;
 use url::Url;
 
 pub struct Cache {
@@ -99,8 +98,8 @@ impl Cache {
         &self,
         oid: &str,
         size: u64,
-        mut writer: writer::Writer,
-    ) -> anyhow::Result<(PathBuf, Source)> {
+        mut writer: channel::Writer<'_>,
+    ) -> anyhow::Result<Source> {
         let name = self.name(oid);
 
         // https://cloud.google.com/storage/docs/json_api/v1/objects/get
@@ -123,13 +122,11 @@ impl Cache {
                     writer.write(&data).await?;
                 }
             }
-            Ok((
-                writer.finish().await?,
-                Source {
-                    bucket: self.bucket.clone(),
-                    name,
-                },
-            ))
+            writer.finish().await?;
+            Ok(Source {
+                bucket: self.bucket.clone(),
+                name,
+            })
         } else {
             let body = body.collect().await?.to_bytes();
             Err(git_lfs::Error {

@@ -1,4 +1,4 @@
-use crate::{git_lfs, misc, writer};
+use crate::{channel, git_lfs, misc};
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use headers::HeaderMapExt;
@@ -62,8 +62,8 @@ impl Cache {
         &self,
         oid: &str,
         size: u64,
-        mut writer: writer::Writer,
-    ) -> anyhow::Result<(PathBuf, Source)> {
+        mut writer: channel::Writer<'_>,
+    ) -> anyhow::Result<Source> {
         let url = self.url(oid)?;
 
         let builder = Request::get(url.as_ref());
@@ -77,7 +77,8 @@ impl Cache {
                     writer.write(&data).await?;
                 }
             }
-            Ok((writer.finish().await?, Source { url }))
+            writer.finish().await?;
+            Ok(Source { url })
         } else {
             let body = body.collect().await?.to_bytes();
             Err(git_lfs::Error {
