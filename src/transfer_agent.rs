@@ -186,7 +186,7 @@ impl Context {
         fs::create_dir_all(&temp_dir).await?;
 
         let path = if let Some(cache) = &self.cache {
-            let mut channel = channel::new_in(&temp_dir)?;
+            let mut channel = channel::new_in(size, &temp_dir)?;
             let (writer, reader) = channel.init()?;
             if let Ok((source, _, _)) = futures::future::try_join3(
                 cache.get(oid, size, writer),
@@ -277,7 +277,7 @@ impl Context {
                     let response = self.client.request(request).await?;
                     let (parts, mut body) = response.into_parts();
                     if parts.status.is_success() {
-                        let mut channel = channel::new_in(&temp_dir)?;
+                        let mut channel = channel::new_in(size, &temp_dir)?;
                         let (mut writer, reader) = channel.init()?;
                         futures::future::try_join3(
                             async {

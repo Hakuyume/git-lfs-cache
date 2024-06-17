@@ -65,7 +65,7 @@ impl Cache {
             .parent()
             .ok_or_else(|| anyhow::format_err!("missing parent"))?;
         fs::create_dir_all(&parent).await?;
-        let mut channel = channel::new_in(parent)?;
+        let mut channel = channel::new_in(size, parent)?;
         let (mut writer, _) = channel.init()?;
 
         let mut body = pin::pin!(body);

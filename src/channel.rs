@@ -8,31 +8,33 @@ use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::watch;
 
-pub fn new_in<P>(dir: P) -> io::Result<Channel>
+pub fn new_in<P>(size: u64, dir: P) -> io::Result<Channel>
 where
     P: AsRef<Path>,
 {
     let temp = NamedTempFile::new_in(dir)?;
-    Ok(Channel { temp })
+    Ok(Channel { temp, size })
 }
 
 pub struct Channel {
     temp: NamedTempFile,
+    size: u64,
 }
 
 impl Channel {
     pub fn init(&mut self) -> io::Result<(Writer<'_>, Reader<'_>)> {
         self.temp.as_file().set_len(0)?;
-        let (tx, rx) = watch::channel((0, false));
+        let (tx, rx) = watch::channel(());
         Ok((
             Writer {
                 temp: &self.temp,
                 writer: BufWriter::new(File::from_std(self.temp.reopen()?)),
-                state: tx,
+                notify: tx,
             },
             Reader {
                 temp: &self.temp,
-                state: rx,
+                size: self.size,
+                notify: rx,
             },
         ))
     }
@@ -45,7 +47,7 @@ impl Channel {
 pub struct Writer<'a> {
     temp: &'a NamedTempFile,
     writer: BufWriter<File>,
-    state: watch::Sender<(u64, bool)>,
+    notify: watch::Sender<()>,
 }
 
 impl fmt::Debug for Writer<'_> {
@@ -59,21 +61,21 @@ impl fmt::Debug for Writer<'_> {
 impl Writer<'_> {
     pub async fn write(&mut self, data: &[u8]) -> io::Result<()> {
         self.writer.write_all(data).await?;
-        self.state
-            .send_modify(|(size, _)| *size += data.len() as u64);
+        let _ = self.notify.send(());
         Ok(())
     }
 
     pub async fn finish(mut self) -> io::Result<()> {
         self.writer.flush().await?;
-        self.state.send_modify(|(_, eof)| *eof = true);
+        let _ = self.notify.send(());
         Ok(())
     }
 }
 
 pub struct Reader<'a> {
     temp: &'a NamedTempFile,
-    state: watch::Receiver<(u64, bool)>,
+    size: u64,
+    notify: watch::Receiver<()>,
 }
 
 impl fmt::Debug for Reader<'_> {
@@ -88,31 +90,30 @@ impl Reader<'_> {
     pub fn stream(
         &self,
     ) -> io::Result<impl Stream<Item = io::Result<Bytes>> + Send + Sync + 'static> {
-        let reader = BufReader::new(File::from_std(self.temp.reopen()?));
+        let size = self.size;
         Ok(futures::stream::try_unfold(
-            (reader, self.state.clone(), 0),
-            |(mut reader, mut state, mut pos)| async move {
-                let (size, eof) = *state
-                    .wait_for(|(size, eof)| *size > pos || *eof)
-                    .await
-                    .map_err(|_| io::ErrorKind::BrokenPipe)?;
+            (
+                BufReader::new(File::from_std(self.temp.reopen()?)),
+                self.notify.clone(),
+                0,
+            ),
+            move |(mut reader, mut notify, pos)| async move {
                 if pos < size {
                     loop {
                         let data = reader.fill_buf().await?;
                         if data.is_empty() {
-                            state
+                            notify
                                 .changed()
                                 .await
                                 .map_err(|_| io::ErrorKind::BrokenPipe)?;
                         } else {
                             let data = Bytes::copy_from_slice(data);
                             reader.consume(data.len());
-                            pos += data.len() as u64;
-                            break Ok(Some((data, (reader, state, pos))));
+                            let pos = pos + data.len() as u64;
+                            break Ok(Some((data, (reader, notify, pos))));
                         }
                     }
                 } else {
-                    assert!(eof);
                     Ok(None)
                 }
             },

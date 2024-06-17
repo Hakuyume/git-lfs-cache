@@ -20,7 +20,7 @@ where
 async fn test() -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
 
-    let mut channel = super::new_in(temp_dir.path())?;
+    let mut channel = super::new_in(11, temp_dir.path())?;
     let (mut writer, reader) = channel.init()?;
     let body_0 = tokio::spawn(collect(reader.stream()?));
     writer.write(b"hello").await?;
@@ -42,7 +42,7 @@ async fn test() -> anyhow::Result<()> {
 async fn test_drop() -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
 
-    let mut channel = super::new_in(temp_dir.path())?;
+    let mut channel = super::new_in(11, temp_dir.path())?;
     let (mut writer, reader) = channel.init()?;
     let body_0 = tokio::spawn(collect(reader.stream()?));
     writer.write(b"hello").await?;
@@ -72,7 +72,7 @@ async fn test_large() -> anyhow::Result<()> {
     rng.fill(&mut body[..]);
 
     let temp_dir = tempfile::tempdir()?;
-    let mut channel = super::new_in(temp_dir.path())?;
+    let mut channel = super::new_in(body.len() as _, temp_dir.path())?;
     let (mut writer, reader) = channel.init()?;
 
     let body_0 = tokio::spawn(collect(reader.stream()?));
