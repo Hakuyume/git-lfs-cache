@@ -1,6 +1,5 @@
 use crate::{channel, git_lfs, misc};
-use bytes::Bytes;
-use futures::{Stream, TryStreamExt};
+use futures::TryStreamExt;
 use headers::HeaderMapExt;
 use http::{header, Request};
 use http_body::Frame;
@@ -89,18 +88,19 @@ impl Cache {
         }
     }
 
-    #[tracing::instrument(err, ret, skip(body))]
-    pub async fn put<B, E>(&self, oid: &str, size: u64, body: B) -> anyhow::Result<()>
-    where
-        B: Stream<Item = Result<Bytes, E>> + Send + Sync + 'static,
-        anyhow::Error: From<E>,
-    {
+    #[tracing::instrument(err, ret)]
+    pub async fn put(
+        &self,
+        oid: &str,
+        size: u64,
+        reader: &channel::Reader<'_>,
+    ) -> anyhow::Result<()> {
         let url = self.url(oid)?;
 
         let builder = Request::put(url.as_ref()).header(header::CONTENT_LENGTH, size);
         let builder = self.authorization(builder).await?;
         let request = builder.body(
-            BodyExt::map_err(StreamBody::new(body.map_ok(Frame::data)), |e| {
+            BodyExt::map_err(StreamBody::new(reader.stream()?.map_ok(Frame::data)), |e| {
                 Box::from(anyhow::Error::from(e))
             })
             .boxed_unsync(),

@@ -1,6 +1,5 @@
 use crate::channel;
-use bytes::Bytes;
-use futures::{Stream, TryStreamExt};
+use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::pin;
@@ -53,12 +52,13 @@ impl Cache {
         Ok(Source { path })
     }
 
-    #[tracing::instrument(err, ret, skip(body))]
-    pub async fn put<B, E>(&self, oid: &str, size: u64, body: B) -> anyhow::Result<()>
-    where
-        B: Stream<Item = Result<Bytes, E>> + Send + Sync + 'static,
-        anyhow::Error: From<E>,
-    {
+    #[tracing::instrument(err, ret)]
+    pub async fn put(
+        &self,
+        oid: &str,
+        size: u64,
+        reader: &channel::Reader<'_>,
+    ) -> anyhow::Result<()> {
         let path = self.path(oid);
 
         let parent = path
@@ -68,7 +68,7 @@ impl Cache {
         let mut channel = channel::new_in(size, parent)?;
         let (mut writer, _) = channel.init()?;
 
-        let mut body = pin::pin!(body);
+        let mut body = pin::pin!(reader.stream()?);
         while let Some(data) = body.try_next().await? {
             writer.write(&data).await?;
         }

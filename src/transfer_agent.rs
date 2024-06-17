@@ -1,8 +1,7 @@
 use crate::{cache, channel, git, git_lfs, jsonl, logs, misc};
-use bytes::Bytes;
 use chrono::Utc;
 use clap::Parser;
-use futures::{Stream, TryStreamExt};
+use futures::TryStreamExt;
 use http::{Request, StatusCode};
 use http_body_util::{BodyExt, Empty};
 use sha2::{Digest, Sha256};
@@ -199,7 +198,7 @@ impl Context {
                     anyhow::ensure!(oid == hex::encode(hasher.finalize()));
                     Ok(())
                 },
-                progress(oid, reader.stream()?, &mut *stdout),
+                progress(oid, &reader, &mut *stdout),
             )
             .await
             {
@@ -290,11 +289,11 @@ impl Context {
                             },
                             async {
                                 if let Some(cache) = &self.cache {
-                                    cache.put(oid, size, reader.stream()?).await?;
+                                    cache.put(oid, size, &reader).await?;
                                 }
                                 Ok(())
                             },
-                            progress(oid, reader.stream()?, &mut *stdout),
+                            progress(oid, &reader, &mut *stdout),
                         )
                         .await?;
                         let path = channel.keep()?;
@@ -327,19 +326,15 @@ impl Context {
     }
 }
 
-async fn progress<B, E>(
+async fn progress(
     oid: &str,
-    body: B,
+    reader: &channel::Reader<'_>,
     stdout: &mut jsonl::Writer<io::Stdout>,
-) -> anyhow::Result<()>
-where
-    B: Stream<Item = Result<Bytes, E>>,
-    anyhow::Error: From<E>,
-{
+) -> anyhow::Result<()> {
     let mut bytes_so_far = 0;
     let mut bytes_since_last = 0;
 
-    let mut body = pin::pin!(body);
+    let mut body = pin::pin!(reader.stream()?);
     while let Some(data) = body.try_next().await? {
         bytes_so_far += data.len() as u64;
         bytes_since_last += data.len() as u64;

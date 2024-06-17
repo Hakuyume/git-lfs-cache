@@ -3,8 +3,7 @@ mod google_cloud_storage;
 mod http;
 
 use crate::channel;
-use bytes::Bytes;
-use futures::{Stream, TryFutureExt};
+use futures::TryFutureExt;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -74,15 +73,16 @@ impl Cache {
         }
     }
 
-    pub async fn put<B, E>(&self, oid: &str, size: u64, body: B) -> anyhow::Result<()>
-    where
-        B: Stream<Item = Result<Bytes, E>> + Send + Sync + 'static,
-        anyhow::Error: From<E>,
-    {
+    pub async fn put(
+        &self,
+        oid: &str,
+        size: u64,
+        reader: &channel::Reader<'_>,
+    ) -> anyhow::Result<()> {
         match self {
-            Self::Filesystem(cache) => cache.put(oid, size, body).await,
-            Self::GoogleCloudStorage(cache) => cache.put(oid, size, body).await,
-            Self::Http(cache) => cache.put(oid, size, body).await,
+            Self::Filesystem(cache) => cache.put(oid, size, reader).await,
+            Self::GoogleCloudStorage(cache) => cache.put(oid, size, reader).await,
+            Self::Http(cache) => cache.put(oid, size, reader).await,
         }
     }
 }
