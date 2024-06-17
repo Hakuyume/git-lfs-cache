@@ -1,10 +1,11 @@
 use bytes::Bytes;
 use futures::Stream;
 use std::fmt;
-use std::io;
+use std::io::{self, SeekFrom};
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 use tokio::fs::File;
+use tokio::io::AsyncSeekExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::watch;
 
@@ -68,6 +69,11 @@ impl Writer<'_> {
     pub async fn finish(mut self) -> io::Result<()> {
         self.writer.flush().await?;
         let _ = self.notify.send(());
+        Ok(())
+    }
+
+    pub async fn reset(&mut self) -> io::Result<()> {
+        self.writer.seek(SeekFrom::Start(0)).await?;
         Ok(())
     }
 }

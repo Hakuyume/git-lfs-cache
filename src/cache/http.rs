@@ -1,12 +1,13 @@
 use crate::{channel, git_lfs, misc};
-use futures::TryStreamExt;
+use futures::{TryFutureExt, TryStreamExt};
 use headers::HeaderMapExt;
-use http::{header, Request};
+use http::{header, Request, StatusCode};
 use http_body::Frame;
 use http_body_util::{BodyExt, Empty, StreamBody};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs;
 use url::Url;
 
@@ -61,31 +62,62 @@ impl Cache {
         &self,
         oid: &str,
         size: u64,
-        mut writer: channel::Writer<'_>,
+        writer: channel::Writer<'_>,
     ) -> anyhow::Result<Source> {
         let url = self.url(oid)?;
+        let writer = Arc::new(writer);
 
-        let builder = Request::get(url.as_ref());
-        let builder = self.authorization(builder).await?;
-        let request = builder.body(Empty::new().map_err(Box::from).boxed_unsync())?;
-        let response = self.client.request(request).await?;
-        let (parts, mut body) = response.into_parts();
-        if parts.status.is_success() {
-            while let Some(frame) = body.frame().await.transpose()? {
-                if let Ok(data) = frame.into_data() {
-                    writer.write(&data).await?;
+        backoff::future::retry(backoff::ExponentialBackoff::default(), || {
+            let url = &url;
+            let mut writer = writer.clone();
+            async move {
+                let builder = Request::get(url.as_ref());
+                let builder = self.authorization(builder).await?;
+                let request = builder
+                    .body(Empty::new().map_err(Box::from).boxed_unsync())
+                    .map_err(misc::backoff_permanent)?;
+                let response = self
+                    .client
+                    .request(request)
+                    .map_err(misc::backoff_transient)
+                    .await?;
+                let (parts, mut body) = response.into_parts();
+                if parts.status.is_success() {
+                    let writer = Arc::get_mut(&mut writer).unwrap();
+                    writer.reset().map_err(misc::backoff_permanent).await?;
+                    while let Some(frame) = body
+                        .frame()
+                        .await
+                        .transpose()
+                        .map_err(misc::backoff_transient)?
+                    {
+                        if let Ok(data) = frame.into_data() {
+                            writer.write(&data).map_err(misc::backoff_permanent).await?;
+                        }
+                    }
+                    Ok(())
+                } else {
+                    let body = body
+                        .collect()
+                        .map_err(misc::backoff_transient)
+                        .await?
+                        .to_bytes();
+                    let e = git_lfs::Error {
+                        code: parts.status,
+                        message: format!("{body:?}"),
+                    };
+                    if parts.status == StatusCode::REQUEST_TIMEOUT || parts.status.is_server_error()
+                    {
+                        Err(misc::backoff_transient(e))
+                    } else {
+                        Err(misc::backoff_permanent(e))
+                    }
                 }
             }
-            writer.finish().await?;
-            Ok(Source { url })
-        } else {
-            let body = body.collect().await?.to_bytes();
-            Err(git_lfs::Error {
-                code: parts.status,
-                message: format!("{body:?}"),
-            }
-            .into())
-        }
+        })
+        .await?;
+        Arc::into_inner(writer).unwrap().finish().await?;
+        Ok(Source { url })
     }
 
     #[tracing::instrument(err, ret)]
@@ -97,26 +129,49 @@ impl Cache {
     ) -> anyhow::Result<()> {
         let url = self.url(oid)?;
 
-        let builder = Request::put(url.as_ref()).header(header::CONTENT_LENGTH, size);
-        let builder = self.authorization(builder).await?;
-        let request = builder.body(
-            BodyExt::map_err(StreamBody::new(reader.stream()?.map_ok(Frame::data)), |e| {
-                Box::from(anyhow::Error::from(e))
-            })
-            .boxed_unsync(),
-        )?;
-        let response = self.client.request(request).await?;
-        let (parts, body) = response.into_parts();
-        if parts.status.is_success() {
-            Ok(())
-        } else {
-            let body = body.collect().await?.to_bytes();
-            Err(git_lfs::Error {
-                code: parts.status,
-                message: format!("{body:?}"),
+        backoff::future::retry(backoff::ExponentialBackoff::default(), || async {
+            let builder = Request::put(url.as_ref()).header(header::CONTENT_LENGTH, size);
+            let builder = self.authorization(builder).await?;
+            let request = builder
+                .body(
+                    BodyExt::map_err(
+                        StreamBody::new(
+                            reader
+                                .stream()
+                                .map_err(misc::backoff_permanent)?
+                                .map_ok(Frame::data),
+                        ),
+                        |e| Box::from(anyhow::Error::from(e)),
+                    )
+                    .boxed_unsync(),
+                )
+                .map_err(misc::backoff_permanent)?;
+            let response = self
+                .client
+                .request(request)
+                .map_err(misc::backoff_transient)
+                .await?;
+            let (parts, body) = response.into_parts();
+            if parts.status.is_success() {
+                Ok(())
+            } else {
+                let body = body
+                    .collect()
+                    .map_err(misc::backoff_transient)
+                    .await?
+                    .to_bytes();
+                let e = git_lfs::Error {
+                    code: parts.status,
+                    message: format!("{body:?}"),
+                };
+                if parts.status == StatusCode::REQUEST_TIMEOUT || parts.status.is_server_error() {
+                    Err(misc::backoff_transient(e))
+                } else {
+                    Err(misc::backoff_permanent(e))
+                }
             }
-            .into())
-        }
+        })
+        .await
     }
 
     fn url(&self, oid: &str) -> anyhow::Result<Url> {
@@ -128,14 +183,23 @@ impl Cache {
     async fn authorization(
         &self,
         mut builder: http::request::Builder,
-    ) -> anyhow::Result<http::request::Builder> {
+    ) -> Result<http::request::Builder, backoff::Error<anyhow::Error>> {
         if let Some(headers) = builder.headers_mut() {
             match &self.authorization {
                 Some(Authorization::Bearer(bearer)) => {
                     let token = match bearer {
-                        Bearer::TokenPath(path) => fs::read_to_string(path).await?,
+                        Bearer::TokenPath(path) => {
+                            fs::read_to_string(path)
+                                .map_err(anyhow::Error::from)
+                                .map_err(backoff::Error::permanent)
+                                .await?
+                        }
                     };
-                    headers.typed_insert(headers::Authorization::bearer(token.trim())?);
+                    headers.typed_insert(
+                        headers::Authorization::bearer(token.trim())
+                            .map_err(anyhow::Error::from)
+                            .map_err(backoff::Error::permanent)?,
+                    );
                 }
                 None => (),
             }
