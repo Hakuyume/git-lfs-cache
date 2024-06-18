@@ -7,8 +7,8 @@ use http_body_util::{BodyExt, Empty, StreamBody};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::fs;
+use tokio::sync::Mutex;
 use url::Url;
 
 pub struct Cache {
@@ -65,11 +65,11 @@ impl Cache {
         writer: channel::Writer<'_>,
     ) -> anyhow::Result<Source> {
         let url = self.url(oid)?;
-        let writer = Arc::new(writer);
+        let writer = Mutex::new(writer);
 
         backoff::future::retry(backoff::ExponentialBackoff::default(), || {
             let url = &url;
-            let mut writer = writer.clone();
+            let writer = &writer;
             async move {
                 let builder = Request::get(url.as_ref());
                 let builder = self.authorization(builder).await?;
@@ -83,7 +83,7 @@ impl Cache {
                     .await?;
                 let (parts, mut body) = response.into_parts();
                 if parts.status.is_success() {
-                    let writer = Arc::get_mut(&mut writer).unwrap();
+                    let writer = writer.lock().await;
                     writer.reset().map_err(misc::backoff_permanent).await?;
                     while let Some(frame) = body
                         .frame()
@@ -116,7 +116,7 @@ impl Cache {
             }
         })
         .await?;
-        Arc::into_inner(writer).unwrap().finish().await?;
+        writer.into_inner().finish().await?;
         Ok(Source { url })
     }
 
