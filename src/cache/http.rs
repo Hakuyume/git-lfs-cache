@@ -83,7 +83,7 @@ impl Cache {
                     .await?;
                 let (parts, mut body) = response.into_parts();
                 if parts.status.is_success() {
-                    let writer = writer.lock().await;
+                    let mut writer = writer.lock().await;
                     writer.reset().map_err(misc::backoff_permanent).await?;
                     while let Some(frame) = body
                         .frame()
