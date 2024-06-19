@@ -1,6 +1,5 @@
-use crate::{git_lfs, misc, writer};
-use bytes::Bytes;
-use futures::{Stream, TryStreamExt};
+use crate::{channel, git_lfs, misc};
+use futures::TryStreamExt;
 use headers::HeaderMapExt;
 use http::{header, Request};
 use http_body::Frame;
@@ -8,7 +7,6 @@ use http_body_util::{BodyExt, Empty, StreamBody};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fmt;
-use std::path::PathBuf;
 use url::Url;
 
 pub struct Cache {
@@ -99,8 +97,8 @@ impl Cache {
         &self,
         oid: &str,
         size: u64,
-        mut writer: writer::Writer,
-    ) -> anyhow::Result<(PathBuf, Source)> {
+        mut writer: channel::Writer<'_>,
+    ) -> anyhow::Result<Source> {
         let name = self.name(oid);
 
         // https://cloud.google.com/storage/docs/json_api/v1/objects/get
@@ -123,13 +121,11 @@ impl Cache {
                     writer.write(&data).await?;
                 }
             }
-            Ok((
-                writer.finish().await?,
-                Source {
-                    bucket: self.bucket.clone(),
-                    name,
-                },
-            ))
+            writer.finish().await?;
+            Ok(Source {
+                bucket: self.bucket.clone(),
+                name,
+            })
         } else {
             let body = body.collect().await?.to_bytes();
             Err(git_lfs::Error {
@@ -140,12 +136,13 @@ impl Cache {
         }
     }
 
-    #[tracing::instrument(err, ret, skip(body))]
-    pub async fn put<B, E>(&self, oid: &str, size: u64, body: B) -> anyhow::Result<()>
-    where
-        B: Stream<Item = Result<Bytes, E>> + Send + Sync + 'static,
-        anyhow::Error: From<E>,
-    {
+    #[tracing::instrument(err, ret)]
+    pub async fn put(
+        &self,
+        oid: &str,
+        size: u64,
+        reader: &channel::Reader<'_>,
+    ) -> anyhow::Result<()> {
         // https://cloud.google.com/storage/docs/json_api/v1/objects/insert
         let mut url = Url::parse_with_params(
             "https://storage.googleapis.com/upload/storage/v1/b",
@@ -157,7 +154,7 @@ impl Cache {
         let builder = Request::post(url.as_ref()).header(header::CONTENT_LENGTH, size);
         let builder = self.authorization(builder).await?;
         let request = builder.body(
-            BodyExt::map_err(StreamBody::new(body.map_ok(Frame::data)), |e| {
+            BodyExt::map_err(StreamBody::new(reader.stream()?.map_ok(Frame::data)), |e| {
                 Box::from(anyhow::Error::from(e))
             })
             .boxed_unsync(),

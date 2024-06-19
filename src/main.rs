@@ -1,4 +1,5 @@
 mod cache;
+mod channel;
 mod git;
 mod git_lfs;
 mod install;
@@ -7,7 +8,6 @@ mod logs;
 mod misc;
 mod stats;
 mod transfer_agent;
-mod writer;
 
 use clap::Parser;
 

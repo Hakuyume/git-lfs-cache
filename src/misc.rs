@@ -59,3 +59,17 @@ pub fn path_segments_mut(url: &mut Url) -> anyhow::Result<PathSegmentsMut<'_>> {
     path_segments.pop_if_empty();
     Ok(path_segments)
 }
+
+pub fn backoff_permanent<E>(e: E) -> backoff::Error<anyhow::Error>
+where
+    anyhow::Error: From<E>,
+{
+    backoff::Error::permanent(anyhow::Error::from(e))
+}
+
+pub fn backoff_transient<E>(e: E) -> backoff::Error<anyhow::Error>
+where
+    anyhow::Error: From<E>,
+{
+    backoff::Error::transient(anyhow::Error::from(e))
+}
