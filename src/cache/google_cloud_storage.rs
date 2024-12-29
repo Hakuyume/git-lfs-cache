@@ -1,23 +1,19 @@
 use crate::{channel, git_lfs, misc};
-use futures::TryStreamExt;
-use headers::HeaderMapExt;
-use http::{header, Request};
+use futures::{TryFutureExt, TryStreamExt};
 use http_body::Frame;
-use http_body_util::{BodyExt, Empty, StreamBody};
+use http_body_util::{BodyExt, StreamBody};
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::fmt;
-use url::Url;
+use tower::Layer;
 
 pub struct Cache {
-    client: misc::Client,
-    authenticator: yup_oauth2::authenticator::DefaultAuthenticator,
+    service: google_cloud_storage::middleware::yup_oauth2::Service<misc::Client, misc::Connector>,
     bucket: String,
     prefix: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Opts {
+pub struct Args {
     bucket: String,
     prefix: Option<String>,
 }
@@ -30,7 +26,7 @@ pub struct Source {
 
 impl fmt::Debug for Cache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GoogleCloudStorage")
+        f.debug_struct("Cache")
             .field("bucket", &self.bucket)
             .field("prefix", &self.prefix)
             .finish()
@@ -38,57 +34,16 @@ impl fmt::Debug for Cache {
 }
 
 impl Cache {
-    pub async fn new(opts: Opts) -> anyhow::Result<Self> {
-        let client = misc::client()?;
-
-        let authenticator = if let Ok(path) = env::var("GOOGLE_APPLICATION_CREDENTIALS") {
-            if let Ok(secret) = yup_oauth2::read_authorized_user_secret(&path).await {
-                yup_oauth2::AuthorizedUserAuthenticator::builder(secret)
-                    .build()
-                    .await?
-            } else if let Ok(secret) = yup_oauth2::read_external_account_secret(&path).await {
-                yup_oauth2::ExternalAccountAuthenticator::builder(secret)
-                    .build()
-                    .await?
-            } else {
-                anyhow::bail!("unknown credentials type")
-            }
-        } else {
-            // https://cloud.google.com/compute/docs/access/create-enable-service-accounts-for-instances#applications
-            let request = Request::get(concat!(
-                "http://metadata.google.internal/computeMetadata/v1",
-                "/instance/service-accounts/default/token",
-            ))
-            .header("Metadata-Flavor", "Google")
-            .body(Empty::new().map_err(Box::from).boxed_unsync())?;
-            let response = client.request(request).await?;
-            let (parts, body) = response.into_parts();
-            let body = body.collect().await?.to_bytes();
-            let access_token = if parts.status.is_success() {
-                #[derive(Deserialize)]
-                struct B {
-                    access_token: String,
-                }
-
-                let B { access_token } = serde_json::from_slice(&body)?;
-                Ok(access_token)
-            } else {
-                Err(git_lfs::Error {
-                    code: parts.status,
-                    message: format!("{body:?}"),
-                })
-            }?;
-
-            yup_oauth2::AccessTokenAuthenticator::builder(access_token)
-                .build()
-                .await?
-        };
-
+    pub async fn new(args: Args) -> anyhow::Result<Self> {
+        let connector = misc::connector()?;
+        let client = misc::client(connector.clone());
+        let service = google_cloud_storage::middleware::yup_oauth2::with_connector(connector)
+            .await?
+            .layer(client);
         Ok(Self {
-            client,
-            authenticator,
-            bucket: opts.bucket,
-            prefix: opts.prefix,
+            service,
+            bucket: args.bucket,
+            prefix: args.prefix,
         })
     }
 
@@ -100,40 +55,21 @@ impl Cache {
         mut writer: channel::Writer<'_>,
     ) -> anyhow::Result<Source> {
         let name = self.name(oid);
-
-        // https://cloud.google.com/storage/docs/json_api/v1/objects/get
-        let mut url = Url::parse_with_params(
-            "https://storage.googleapis.com/storage/v1/b",
-            [("alt", "media")],
-        )?;
-        misc::path_segments_mut(&mut url)?
-            .push(&self.bucket)
-            .push("o")
-            .push(&name);
-        let builder = Request::get(url.as_ref());
-        let builder = self.authorization(builder).await?;
-        let request = builder.body(Empty::new().map_err(Box::from).boxed_unsync())?;
-        let response = self.client.request(request).await?;
-        let (parts, mut body) = response.into_parts();
-        if parts.status.is_success() {
-            while let Some(frame) = body.frame().await.transpose()? {
-                if let Ok(data) = frame.into_data() {
-                    writer.write(&data).await?;
-                }
+        let response = google_cloud_storage::api::xml::get_object::builder(&self.bucket, &name)
+            .send(self.service.clone())
+            .map_err(map_err)
+            .await?;
+        let mut body = response.into_body();
+        while let Some(frame) = body.frame().await.transpose()? {
+            if let Ok(data) = frame.into_data() {
+                writer.write(&data).await?;
             }
-            writer.finish().await?;
-            Ok(Source {
-                bucket: self.bucket.clone(),
-                name,
-            })
-        } else {
-            let body = body.collect().await?.to_bytes();
-            Err(git_lfs::Error {
-                code: parts.status,
-                message: format!("{body:?}"),
-            }
-            .into())
         }
+        writer.finish().await?;
+        Ok(Source {
+            bucket: self.bucket.clone(),
+            name,
+        })
     }
 
     #[tracing::instrument(err, ret)]
@@ -143,34 +79,16 @@ impl Cache {
         size: u64,
         reader: &channel::Reader<'_>,
     ) -> anyhow::Result<()> {
-        // https://cloud.google.com/storage/docs/json_api/v1/objects/insert
-        let mut url = Url::parse_with_params(
-            "https://storage.googleapis.com/upload/storage/v1/b",
-            [("uploadType", "media"), ("name", &self.name(oid))],
-        )?;
-        misc::path_segments_mut(&mut url)?
-            .push(&self.bucket)
-            .push("o");
-        let builder = Request::post(url.as_ref()).header(header::CONTENT_LENGTH, size);
-        let builder = self.authorization(builder).await?;
-        let request = builder.body(
-            BodyExt::map_err(StreamBody::new(reader.stream()?.map_ok(Frame::data)), |e| {
-                Box::from(anyhow::Error::from(e))
-            })
-            .boxed_unsync(),
-        )?;
-        let response = self.client.request(request).await?;
-        let (parts, body) = response.into_parts();
-        if parts.status.is_success() {
-            Ok(())
-        } else {
-            let body = body.collect().await?.to_bytes();
-            Err(git_lfs::Error {
-                code: parts.status,
-                message: format!("{body:?}"),
-            }
-            .into())
-        }
+        let body = BodyExt::map_err(StreamBody::new(reader.stream()?.map_ok(Frame::data)), |e| {
+            Box::from(anyhow::Error::from(e))
+        })
+        .boxed_unsync();
+        google_cloud_storage::api::xml::put_object::builder(&self.bucket, self.name(oid), body)
+            .content_length(size)
+            .send(self.service.clone())
+            .map_err(map_err)
+            .await?;
+        Ok(())
     }
 
     fn name(&self, oid: &str) -> String {
@@ -180,22 +98,22 @@ impl Cache {
             oid.to_string()
         }
     }
+}
 
-    async fn authorization(
-        &self,
-        mut builder: http::request::Builder,
-    ) -> anyhow::Result<http::request::Builder> {
-        if let Some(headers) = builder.headers_mut() {
-            let token = self
-                .authenticator
-                .token(&["https://www.googleapis.com/auth/cloud-platform"])
-                .await?;
-            headers.typed_insert(headers::Authorization::bearer(
-                token
-                    .token()
-                    .ok_or_else(|| anyhow::format_err!("missing token"))?,
-            )?);
+fn map_err<S, B>(e: google_cloud_storage::api::Error<S, B>) -> anyhow::Error
+where
+    S: std::error::Error + Send + Sync + 'static,
+    B: std::error::Error + Send + Sync + 'static,
+{
+    match e {
+        google_cloud_storage::api::Error::Api(e) => {
+            let (parts, body) = e.into_parts();
+            git_lfs::Error {
+                code: parts.status,
+                message: format!("{body:?}"),
+            }
+            .into()
         }
-        Ok(builder)
+        e => e.into(),
     }
 }

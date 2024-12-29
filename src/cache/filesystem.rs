@@ -12,7 +12,7 @@ pub struct Cache {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Opts {
+pub struct Args {
     dir: PathBuf,
 }
 
@@ -22,10 +22,10 @@ pub struct Source {
 }
 
 impl Cache {
-    pub async fn new(opts: Opts) -> anyhow::Result<Self> {
-        fs::create_dir_all(&opts.dir).await?;
+    pub async fn new(args: Args) -> anyhow::Result<Self> {
+        fs::create_dir_all(&args.dir).await?;
         Ok(Self {
-            dir: opts.dir.canonicalize()?,
+            dir: args.dir.canonicalize()?,
         })
     }
 

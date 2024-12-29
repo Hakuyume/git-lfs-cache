@@ -18,7 +18,7 @@ pub struct Cache {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Opts {
+pub struct Args {
     endpoint: Url,
     authorization: Option<Authorization>,
 }
@@ -42,18 +42,16 @@ enum Bearer {
 
 impl fmt::Debug for Cache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GoogleCloudStorage")
-            .field("url", &self.endpoint)
-            .finish()
+        f.debug_struct("Cache").field("url", &self.endpoint).finish()
     }
 }
 
 impl Cache {
-    pub async fn new(opts: Opts) -> anyhow::Result<Self> {
+    pub async fn new(args: Args) -> anyhow::Result<Self> {
         Ok(Self {
-            client: misc::client()?,
-            endpoint: opts.endpoint,
-            authorization: opts.authorization,
+            client: misc::client(misc::connector()?),
+            endpoint: args.endpoint,
+            authorization: args.authorization,
         })
     }
 
