@@ -99,6 +99,7 @@ pub mod response {
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "lowercase")]
+    #[allow(clippy::large_enum_variant)]
     pub enum Inner {
         Actions {
             #[allow(dead_code)]
