@@ -42,7 +42,9 @@ enum Bearer {
 
 impl fmt::Debug for Cache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Cache").field("url", &self.endpoint).finish()
+        f.debug_struct("Cache")
+            .field("url", &self.endpoint)
+            .finish()
     }
 }
 
