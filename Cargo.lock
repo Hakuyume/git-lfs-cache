@@ -682,7 +682,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 [[package]]
 name = "google-cloud-storage"
 version = "0.1.0"
-source = "git+https://github.com/Hakuyume/google-cloud-storage-rs.git#e01f77df526a21680417bd661c2dc6f99aeb33c4"
+source = "git+https://github.com/Hakuyume/google-cloud-storage-rs.git#07f8667edd43f9798063db197a9f06a7de44b49c"
 dependencies = [
  "base64 0.22.1",
  "bytes",
