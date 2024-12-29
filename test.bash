@@ -38,7 +38,7 @@ for i in {0..7}
 do
     dd if=/dev/urandom of=${i}.bin bs=64k count=1
 done
-git add *.bin
+git add *.bin .gitattributes
 git config user.name name
 git config user.email email
 git commit -m commit
