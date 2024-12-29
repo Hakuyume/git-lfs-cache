@@ -5,9 +5,9 @@ use std::fmt::{self, Display};
 use tokio::fs::{self, File};
 
 #[derive(Debug, Parser)]
-pub struct Opts {}
+pub struct Args {}
 
-pub async fn main(_: Opts) -> anyhow::Result<()> {
+pub async fn main(_: Args) -> anyhow::Result<()> {
     let current_dir = env::current_dir()?;
     let git_dir = git::rev_parse_absolute_git_dir(&current_dir).await?;
     let logs_dir = logs::dir(&git_dir);

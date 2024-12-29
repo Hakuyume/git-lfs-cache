@@ -20,7 +20,7 @@ struct Args {
 #[derive(Debug, Parser)]
 enum Command {
     Install(install::Args),
-    Stats(stats::Opts),
+    Stats(stats::Args),
     TransferAgent(transfer_agent::Args),
 }
 
