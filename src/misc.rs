@@ -10,7 +10,7 @@ pub type Connector =
     hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
 pub fn connector() -> anyhow::Result<Connector> {
     let tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
+        rustls::crypto::ring::default_provider(),
     ))
     .with_safe_default_protocol_versions()?
     .with_native_roots()?
