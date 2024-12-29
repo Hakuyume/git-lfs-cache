@@ -1,5 +1,6 @@
 use crate::{channel, git_lfs, misc};
 use futures::{TryFutureExt, TryStreamExt};
+use headers::ContentLength;
 use http_body::Frame;
 use http_body_util::{BodyExt, StreamBody};
 use serde::{Deserialize, Serialize};
@@ -84,7 +85,7 @@ impl Cache {
         })
         .boxed_unsync();
         google_cloud_storage::api::xml::put_object::builder(&self.bucket, self.name(oid), body)
-            .content_length(size)
+            .header(ContentLength(size))
             .send(self.service.clone())
             .map_err(map_err)
             .await?;
