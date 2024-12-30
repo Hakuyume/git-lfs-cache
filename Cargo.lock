@@ -578,7 +578,7 @@ dependencies = [
 [[package]]
 name = "google-cloud-storage"
 version = "0.1.0"
-source = "git+https://github.com/Hakuyume/google-cloud-storage-rs.git#958606d265ecf87fcb07c0df302972333549f811"
+source = "git+https://github.com/Hakuyume/google-cloud-storage-rs.git#43bf1b809864f3a04fcce1c1c2428f7d94ae9cb0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
