@@ -49,6 +49,7 @@ git clone origin bar
 cd bar
 ${GIT_LFS_CACHE} install "${GIT_LFS_CACHE_OPTIONS[@]}"
 git lfs install --local
+git config --list
 git lfs pull
 ${GIT_LFS_CACHE} stats
 cd -
@@ -61,6 +62,7 @@ git clone origin baz
 cd baz
 ${GIT_LFS_CACHE} install "${GIT_LFS_CACHE_OPTIONS[@]}"
 git lfs install --local
+git config --list
 git lfs pull
 ${GIT_LFS_CACHE} stats
 cd -
