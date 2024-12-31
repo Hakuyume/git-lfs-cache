@@ -18,7 +18,7 @@ pub struct Cache {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Opts {
+pub struct Args {
     endpoint: Url,
     authorization: Option<Authorization>,
 }
@@ -49,11 +49,11 @@ impl fmt::Debug for Cache {
 }
 
 impl Cache {
-    pub async fn new(opts: Opts) -> anyhow::Result<Self> {
+    pub async fn new(args: Args) -> anyhow::Result<Self> {
         Ok(Self {
             client: misc::client()?,
-            endpoint: opts.endpoint,
-            authorization: opts.authorization,
+            endpoint: args.endpoint,
+            authorization: args.authorization,
         })
     }
 

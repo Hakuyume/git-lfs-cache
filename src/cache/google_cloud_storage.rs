@@ -17,7 +17,7 @@ pub struct Cache {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Opts {
+pub struct Args {
     bucket: String,
     prefix: Option<String>,
 }
@@ -38,7 +38,7 @@ impl fmt::Debug for Cache {
 }
 
 impl Cache {
-    pub async fn new(opts: Opts) -> anyhow::Result<Self> {
+    pub async fn new(args: Args) -> anyhow::Result<Self> {
         let client = misc::client()?;
 
         let authenticator = if let Ok(path) = env::var("GOOGLE_APPLICATION_CREDENTIALS") {
@@ -87,8 +87,8 @@ impl Cache {
         Ok(Self {
             client,
             authenticator,
-            bucket: opts.bucket,
-            prefix: opts.prefix,
+            bucket: args.bucket,
+            prefix: args.prefix,
         })
     }
 
