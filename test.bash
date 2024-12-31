@@ -18,6 +18,7 @@ export LFS_ADMINPASS=$(base64 /dev/urandom | head -c 16)
 LFS_TEST_SERVER_PID=$!
 trap "kill ${LFS_TEST_SERVER_PID}" EXIT
 
+git lfs install
 git config --global lfs.url http://localhost:8080
 git config --global credential.helper "store --file=$(pwd)/credentials"
 git credential-store store --file=$(pwd)/credentials << EOD
@@ -26,13 +27,11 @@ host=localhost:8080
 username=${LFS_ADMINUSER}
 password=${LFS_ADMINPASS}
 EOD
-git config --list --show-origin
 
 git init --bare origin
 
 git clone origin foo
 cd foo
-git lfs install --local
 git config --list --show-origin
 git lfs track '*.bin'
 for i in {0..7}
@@ -50,7 +49,6 @@ ${GIT_LFS_CACHE} install --global "${GIT_LFS_CACHE_OPTIONS[@]}"
 
 git clone origin bar
 cd bar
-git lfs install --local
 git config --list --show-origin
 git lfs pull
 ${GIT_LFS_CACHE} stats
@@ -62,7 +60,6 @@ sleep 1
 
 git clone origin baz
 cd baz
-git lfs install --local
 git config --list --show-origin
 git lfs pull
 ${GIT_LFS_CACHE} stats
