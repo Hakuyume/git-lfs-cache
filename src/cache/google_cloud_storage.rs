@@ -30,7 +30,7 @@ pub struct Source {
 
 impl fmt::Debug for Cache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GoogleCloudStorage")
+        f.debug_struct("Cache")
             .field("bucket", &self.bucket)
             .field("prefix", &self.prefix)
             .finish()
