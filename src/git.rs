@@ -1,6 +1,6 @@
 use crate::misc;
 use clap::Parser;
-use secrecy::Secret;
+use secrecy::SecretString;
 use std::collections::HashMap;
 use std::fmt::{Debug, Write};
 use std::path::{Path, PathBuf};
@@ -55,7 +55,7 @@ where
 #[derive(Debug)]
 pub struct Credential {
     pub username: Option<String>,
-    pub password: Option<Secret<String>>,
+    pub password: Option<SecretString>,
 }
 
 #[tracing::instrument(err, ret)]
@@ -94,8 +94,9 @@ where
         username: outputs.get("username").map(ToString::to_string),
         password: outputs
             .get("password")
-            .map(ToString::to_string)
-            .map(Secret::new),
+            .copied()
+            .map(Box::from)
+            .map(SecretString::new),
     })
 }
 
