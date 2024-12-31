@@ -102,10 +102,10 @@ pub mod response {
     pub enum Inner {
         Actions {
             #[allow(dead_code)]
-            upload: Option<Action>,
+            upload: Option<Box<Action>>,
             #[allow(dead_code)]
-            verify: Option<Action>,
-            download: Option<Action>,
+            verify: Option<Box<Action>>,
+            download: Option<Box<Action>>,
         },
         Error(Error),
     }
