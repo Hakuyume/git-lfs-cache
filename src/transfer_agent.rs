@@ -131,7 +131,7 @@ impl Context {
         };
 
         Ok(Self {
-            client: misc::client(misc::connector()?),
+            client: misc::client()?,
             current_dir,
             git_dir,
             logs: jsonl::Writer::new(File::from_std(logs)),

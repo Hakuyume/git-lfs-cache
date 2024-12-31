@@ -8,7 +8,13 @@ use url::{PathSegmentsMut, Url};
 
 pub type Connector =
     hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
-pub fn connector() -> anyhow::Result<Connector> {
+pub type Client<B = UnsyncBoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>> =
+    hyper_util::client::legacy::Client<Connector, B>;
+pub fn client<B>() -> anyhow::Result<Client<B>>
+where
+    B: http_body::Body + Send,
+    B::Data: Send,
+{
     let tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -21,16 +27,10 @@ pub fn connector() -> anyhow::Result<Connector> {
         .enable_http1()
         .enable_http2()
         .build();
-    Ok(connector)
-}
-
-pub type Client = hyper_util::client::legacy::Client<
-    Connector,
-    UnsyncBoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>,
->;
-pub fn client(connector: Connector) -> Client {
-    hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-        .build(connector)
+    Ok(
+        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+            .build(connector),
+    )
 }
 
 pub async fn spawn(command: &mut Command, stdin: Option<&[u8]>) -> anyhow::Result<Vec<u8>> {

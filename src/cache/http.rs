@@ -51,7 +51,7 @@ impl fmt::Debug for Cache {
 impl Cache {
     pub async fn new(args: Args) -> anyhow::Result<Self> {
         Ok(Self {
-            client: misc::client(misc::connector()?),
+            client: misc::client()?,
             endpoint: args.endpoint,
             authorization: args.authorization,
         })

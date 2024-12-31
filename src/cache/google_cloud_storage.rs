@@ -36,11 +36,9 @@ impl fmt::Debug for Cache {
 
 impl Cache {
     pub async fn new(args: Args) -> anyhow::Result<Self> {
-        let connector = misc::connector()?;
-        let client = misc::client(connector.clone());
-        let service = google_cloud_storage::middleware::yup_oauth2::with_connector(connector)
+        let service = google_cloud_storage::middleware::yup_oauth2::with_client(misc::client()?)
             .await?
-            .layer(client);
+            .layer(misc::client()?);
         Ok(Self {
             service,
             bucket: args.bucket,
