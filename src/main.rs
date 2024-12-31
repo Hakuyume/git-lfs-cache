@@ -12,24 +12,24 @@ mod transfer_agent;
 use clap::Parser;
 
 #[derive(Debug, Parser)]
-struct Opts {
+struct Args {
     #[clap(subcommand)]
     command: Command,
 }
 
 #[derive(Debug, Parser)]
 enum Command {
-    Install(install::Opts),
-    Stats(stats::Opts),
-    TransferAgent(transfer_agent::Opts),
+    Install(install::Args),
+    Stats(stats::Args),
+    TransferAgent(transfer_agent::Args),
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let opts = Opts::parse();
-    match opts.command {
-        Command::Install(opts) => install::main(opts).await,
-        Command::Stats(opts) => stats::main(opts).await,
-        Command::TransferAgent(opts) => transfer_agent::main(opts).await,
+    let args = Args::parse();
+    match args.command {
+        Command::Install(args) => install::main(args).await,
+        Command::Stats(args) => stats::main(args).await,
+        Command::TransferAgent(args) => transfer_agent::main(args).await,
     }
 }

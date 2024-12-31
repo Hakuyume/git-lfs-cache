@@ -17,12 +17,12 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 #[derive(Debug, Parser)]
-pub struct Opts {
+pub struct Args {
     #[clap(long)]
-    cache: Option<cache::Opts>,
+    cache: Option<cache::Args>,
 }
 
-pub async fn main(opts: Opts) -> anyhow::Result<()> {
+pub async fn main(args: Args) -> anyhow::Result<()> {
     let current_dir = env::current_dir()?;
     let git_dir = git::rev_parse_absolute_git_dir(&current_dir).await?;
     let logs_dir = logs::dir(&git_dir);
@@ -44,7 +44,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
         .with(tracing_subscriber::filter::EnvFilter::from_default_env())
         .try_init()?;
 
-    let mut context = Context::new(opts, current_dir, git_dir, logs_dir).await?;
+    let mut context = Context::new(args, current_dir, git_dir, logs_dir).await?;
 
     let mut stdin = jsonl::Reader::new(io::stdin());
     let mut stdout = jsonl::Writer::new(io::stdout());
@@ -113,7 +113,7 @@ struct Context {
 impl Context {
     #[tracing::instrument(err, ret)]
     async fn new(
-        opts: Opts,
+        args: Args,
         current_dir: PathBuf,
         git_dir: PathBuf,
         logs_dir: PathBuf,
@@ -124,8 +124,8 @@ impl Context {
             .tempfile_in(logs_dir)?
             .keep()?;
 
-        let cache = if let Some(opts) = opts.cache {
-            Some(cache::Cache::new(opts).await?)
+        let cache = if let Some(args) = args.cache {
+            Some(cache::Cache::new(args).await?)
         } else {
             None
         };

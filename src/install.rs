@@ -4,25 +4,25 @@ use std::borrow::{Borrow, Cow};
 use std::env;
 
 #[derive(Clone, Debug, Parser)]
-pub struct Opts {
+pub struct Args {
     #[clap(flatten)]
     location: git::Location,
     #[clap(long)]
-    cache: Option<cache::Opts>,
+    cache: Option<cache::Args>,
 }
 
-pub async fn main(opts: Opts) -> anyhow::Result<()> {
+pub async fn main(args: Args) -> anyhow::Result<()> {
     let current_dir = env::current_dir()?;
     let path = env::current_exe()?;
 
-    let mut args = vec![Cow::Borrowed("transfer-agent")];
-    if let Some(cache) = &opts.cache {
-        args.push(Cow::Borrowed("--cache"));
-        args.push(Cow::Owned(serde_json::to_string(cache)?));
+    let mut transfer_agent = vec![Cow::Borrowed("transfer-agent")];
+    if let Some(cache) = &args.cache {
+        transfer_agent.push(Cow::Borrowed("--cache"));
+        transfer_agent.push(Cow::Owned(serde_json::to_string(cache)?));
     }
-    let args = shlex::Quoter::new().join(args.iter().map(Borrow::borrow))?;
+    let transfer_agent = shlex::Quoter::new().join(transfer_agent.iter().map(Borrow::borrow))?;
 
-    git::config(&current_dir, &opts.location, |command| {
+    git::config(&current_dir, &args.location, |command| {
         command
             .arg(concat!(
                 "lfs.customtransfer.",
@@ -32,17 +32,17 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
             .arg(path)
     })
     .await?;
-    git::config(&current_dir, &opts.location, |command| {
+    git::config(&current_dir, &args.location, |command| {
         command
             .arg(concat!(
                 "lfs.customtransfer.",
                 env!("CARGO_PKG_NAME"),
                 ".args"
             ))
-            .arg(args)
+            .arg(transfer_agent)
     })
     .await?;
-    git::config(&current_dir, &opts.location, |command| {
+    git::config(&current_dir, &args.location, |command| {
         command
             .arg(concat!(
                 "lfs.customtransfer.",
@@ -52,7 +52,7 @@ pub async fn main(opts: Opts) -> anyhow::Result<()> {
             .arg("download")
     })
     .await?;
-    git::config(&current_dir, &opts.location, |command| {
+    git::config(&current_dir, &args.location, |command| {
         command
             .arg("lfs.standalonetransferagent")
             .arg(env!("CARGO_PKG_NAME"))

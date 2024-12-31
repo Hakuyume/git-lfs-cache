@@ -16,13 +16,13 @@ pub enum Cache {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Opts {
-    Filesystem(filesystem::Opts),
-    GoogleCloudStorage(google_cloud_storage::Opts),
-    Http(http::Opts),
+pub enum Args {
+    Filesystem(filesystem::Args),
+    GoogleCloudStorage(google_cloud_storage::Args),
+    Http(http::Args),
 }
 
-impl FromStr for Opts {
+impl FromStr for Args {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         serde_json::from_str(s).map_err(|e| e.to_string())
@@ -38,15 +38,15 @@ pub enum Source {
 }
 
 impl Cache {
-    pub async fn new(opts: Opts) -> anyhow::Result<Self> {
-        match opts {
-            Opts::Filesystem(opts) => filesystem::Cache::new(opts).map_ok(Self::Filesystem).await,
-            Opts::GoogleCloudStorage(opts) => {
-                google_cloud_storage::Cache::new(opts)
+    pub async fn new(args: Args) -> anyhow::Result<Self> {
+        match args {
+            Args::Filesystem(args) => filesystem::Cache::new(args).map_ok(Self::Filesystem).await,
+            Args::GoogleCloudStorage(args) => {
+                google_cloud_storage::Cache::new(args)
                     .map_ok(Self::GoogleCloudStorage)
                     .await
             }
-            Opts::Http(opts) => http::Cache::new(opts).map_ok(Self::Http).await,
+            Args::Http(args) => http::Cache::new(args).map_ok(Self::Http).await,
         }
     }
 
