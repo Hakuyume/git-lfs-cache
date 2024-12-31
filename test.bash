@@ -26,13 +26,14 @@ host=localhost:8080
 username=${LFS_ADMINUSER}
 password=${LFS_ADMINPASS}
 EOD
-git config --list
+git config --list --show-origin
 
 git init --bare origin
 
 git clone origin foo
 cd foo
 git lfs install --local
+git config --list --show-origin
 git lfs track '*.bin'
 for i in {0..7}
 do
@@ -45,11 +46,12 @@ git commit -m commit
 git push origin
 cd -
 
+${GIT_LFS_CACHE} install --global "${GIT_LFS_CACHE_OPTIONS[@]}"
+
 git clone origin bar
 cd bar
-${GIT_LFS_CACHE} install "${GIT_LFS_CACHE_OPTIONS[@]}"
 git lfs install --local
-git config --list
+git config --list --show-origin
 git lfs pull
 ${GIT_LFS_CACHE} stats
 cd -
@@ -60,9 +62,8 @@ sleep 1
 
 git clone origin baz
 cd baz
-${GIT_LFS_CACHE} install "${GIT_LFS_CACHE_OPTIONS[@]}"
 git lfs install --local
-git config --list
+git config --list --show-origin
 git lfs pull
 ${GIT_LFS_CACHE} stats
 cd -
