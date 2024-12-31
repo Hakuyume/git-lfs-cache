@@ -1,26 +1,35 @@
 use bytes::Bytes;
 use http_body_util::combinators::UnsyncBoxBody;
-use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
-use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::rt::TokioExecutor;
-use std::error;
-use std::io;
+use hyper_rustls::ConfigBuilderExt;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::process::Command;
 use url::{PathSegmentsMut, Url};
 
-pub type Client = hyper_util::client::legacy::Client<
-    HttpsConnector<HttpConnector>,
-    UnsyncBoxBody<Bytes, Box<dyn error::Error + Send + Sync>>,
->;
-pub fn client() -> Result<Client, io::Error> {
-    let connector = HttpsConnectorBuilder::new()
-        .with_native_roots()?
+pub type Connector =
+    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
+pub type Client<B = UnsyncBoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>> =
+    hyper_util::client::legacy::Client<Connector, B>;
+pub fn client<B>() -> anyhow::Result<Client<B>>
+where
+    B: http_body::Body + Send,
+    B::Data: Send,
+{
+    let tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()?
+    .with_native_roots()?
+    .with_no_client_auth();
+    let connector = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(tls_config)
         .https_or_http()
         .enable_http1()
         .enable_http2()
         .build();
-    Ok(hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(connector))
+    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .build(connector);
+    Ok(client)
 }
 
 pub async fn spawn(command: &mut Command, stdin: Option<&[u8]>) -> anyhow::Result<Vec<u8>> {
