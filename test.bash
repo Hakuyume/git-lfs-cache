@@ -5,13 +5,18 @@ GIT_LFS_CACHE=$(realpath $1)
 shift
 GIT_LFS_CACHE_OPTIONS=("$@")
 
+LFS_TEST_SERVER=$(cd $(dirname $0) && pwd)/lfs-test-server.tar.gz
+if [ ! -f ${LFS_TEST_SERVER} ]; then
+    curl -L https://github.com/git-lfs/lfs-test-server/releases/download/v0.3.0/Linux.AMD64.gz -o ${LFS_TEST_SERVER}
+fi
+
 cd $(mktemp -d)
 
 export XDG_CONFIG_HOME=$(pwd)/config
 mkdir -p ${XDG_CONFIG_HOME}/git
 touch ${XDG_CONFIG_HOME}/git/config
 
-curl -L https://github.com/git-lfs/lfs-test-server/releases/download/v0.3.0/Linux.AMD64.gz | tar -xzf -
+tar -xf ${LFS_TEST_SERVER}
 export LFS_ADMINUSER=admin
 export LFS_ADMINPASS=$(base64 /dev/urandom | head -c 16)
 ./lfs-test-server-linux-amd64/lfs-test-server &
