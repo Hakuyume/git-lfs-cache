@@ -5,9 +5,9 @@ GIT_LFS_CACHE=$(realpath $1)
 shift
 GIT_LFS_CACHE_OPTIONS=("$@")
 
-LFS_TEST_SERVER=$(cd $(dirname $0) && pwd)/lfs-test-server.tar.gz
-if [ ! -f ${LFS_TEST_SERVER} ]; then
-    curl -L https://github.com/git-lfs/lfs-test-server/releases/download/v0.3.0/Linux.AMD64.gz -o ${LFS_TEST_SERVER}
+export GOBIN=$(cd $(dirname $0) && pwd)/bin
+if [ ! -f ${GOBIN}/lfs-test-server ]; then
+    go install github.com/git-lfs/lfs-test-server@513e795
 fi
 
 cd $(mktemp -d)
@@ -16,10 +16,9 @@ export XDG_CONFIG_HOME=$(pwd)/config
 mkdir -p ${XDG_CONFIG_HOME}/git
 touch ${XDG_CONFIG_HOME}/git/config
 
-tar -xf ${LFS_TEST_SERVER}
 export LFS_ADMINUSER=admin
 export LFS_ADMINPASS=$(base64 /dev/urandom | head -c 16)
-./lfs-test-server-linux-amd64/lfs-test-server &
+${GOBIN}/lfs-test-server &
 LFS_TEST_SERVER_PID=$!
 trap "kill ${LFS_TEST_SERVER_PID}" EXIT
 
