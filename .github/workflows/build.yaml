@@ -158,20 +158,23 @@ jobs:
     needs: cargo-build
     strategy:
       matrix:
-        target:
+        platform:
+          - linux-amd64
+          - linux-arm64
+        cache:
           - filesystem
           - http
-    runs-on: ubuntu-latest
+    runs-on: ${{ (matrix.platform == 'linux-amd64' && 'ubuntu-24.04') || (matrix.platform == 'linux-arm64' && 'ubuntu-24.04-arm') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: linux-amd64
+          name: ${{ matrix.platform }}
       - run: chmod +x git-lfs-cache
-      - if: matrix.target == 'filesystem'
+      - if: matrix.cache == 'filesystem'
         run: |
           bash test.bash git-lfs-cache --cache='{"filesystem": {"dir": "/tmp/cache"}}'
-      - if: matrix.target == 'http'
+      - if: matrix.cache == 'http'
         run: |
           sudo tee /etc/nginx/sites-enabled/default << 'EOD'
           server {
