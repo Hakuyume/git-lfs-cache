@@ -8,7 +8,7 @@ use std::fmt;
 use tower::Layer;
 
 pub struct Cache {
-    service: google_cloud_storage::middleware::yup_oauth2::Service<misc::Client, misc::Connector>,
+    service: google_cloud_storage::yup_oauth2::Service<misc::Client, misc::Connector>,
     bucket: String,
     prefix: Option<String>,
 }
@@ -36,7 +36,7 @@ impl fmt::Debug for Cache {
 
 impl Cache {
     pub async fn new(args: Args) -> anyhow::Result<Self> {
-        let service = google_cloud_storage::middleware::yup_oauth2::with_client(misc::client()?)
+        let service = google_cloud_storage::yup_oauth2::Layer::with_client(misc::client()?)
             .await?
             .layer(misc::client()?);
         Ok(Self {
@@ -83,7 +83,7 @@ impl Cache {
         })
         .boxed_unsync();
         google_cloud_storage::api::xml::put_object::builder(&self.bucket, self.name(oid), body)
-            .header(ContentLength(size))
+            .typed_header(ContentLength(size))
             .send(self.service.clone())
             .map_err(map_err)
             .await?;
@@ -105,8 +105,8 @@ where
     B: std::error::Error + Send + Sync + 'static,
 {
     match e {
-        google_cloud_storage::api::Error::Api(e) => {
-            let (parts, body) = e.into_parts();
+        google_cloud_storage::api::Error::Status(e) => {
+            let (parts, body) = e.0.into_parts();
             git_lfs::Error {
                 code: parts.status,
                 message: format!("{body:?}"),

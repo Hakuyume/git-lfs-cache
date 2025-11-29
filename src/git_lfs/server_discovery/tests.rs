@@ -1,9 +1,8 @@
-use super::{server_discovery, Operation};
+use super::{Operation, server_discovery};
 use crate::misc;
 use headers::authorization::Basic;
 use headers::{Authorization, Header, HeaderMapExt};
 use http::HeaderValue;
-use std::env;
 use tokio::process::Command;
 
 async fn init(
@@ -53,15 +52,12 @@ async fn init(
         .await?;
     }
 
-    env::set_var(
-        "GIT_SSH_COMMAND",
-        concat!(
-            "jq --args --null-input ",
-            r#"'{href: "https://git-server.com/foo/bar.git/info/lfs", "#,
-            r#"header: ($ARGS.positional | to_entries | map({(.key | tostring): .value}) | add)}' "#,
-            "--",
-        ),
-    );
+    super::GIT_SSH_COMMAND.set(Some(concat!(
+        "jq --args --null-input ",
+        r#"'{href: "https://git-server.com/foo/bar.git/info/lfs", "#,
+        r#"header: ($ARGS.positional | to_entries | map({(.key | tostring): .value}) | add)}' "#,
+        "--",
+    )));
 
     Ok(temp_dir)
 }

@@ -4,14 +4,19 @@ use super::Operation;
 use crate::{git, misc};
 use futures::TryFutureExt;
 use headers::{Authorization, HeaderMapExt};
-use http::{header, HeaderMap, HeaderName, HeaderValue};
+use http::{HeaderMap, HeaderName, HeaderValue, header};
 use secrecy::ExposeSecret;
 use serde::Deserialize;
+use std::cell::Cell;
 use std::env;
 use std::fmt::Debug;
 use std::path::Path;
 use tokio::process::Command;
 use url::Url;
+
+thread_local! {
+    static GIT_SSH_COMMAND: Cell<Option<&'static str>> = const { Cell::new(None) };
+}
 
 #[tracing::instrument(err, ret)]
 pub async fn server_discovery<P>(
@@ -69,15 +74,15 @@ where
                     ))
                 }));
             }
-            if authorization && !header.contains_key(header::AUTHORIZATION) {
-                if let Ok(git::Credential {
+            if authorization
+                && !header.contains_key(header::AUTHORIZATION)
+                && let Ok(git::Credential {
                     username: Some(username),
                     password: Some(password),
                     ..
                 }) = git::credential_fill(current_dir, &url).await
-                {
-                    header.typed_insert(Authorization::basic(&username, password.expose_secret()));
-                }
+            {
+                header.typed_insert(Authorization::basic(&username, password.expose_secret()));
             }
 
             let href = if custom {
@@ -93,7 +98,10 @@ where
         }
         "ssh" => {
             if authorization {
-                let ssh_command = env::var("GIT_SSH_COMMAND").ok();
+                let ssh_command = GIT_SSH_COMMAND
+                    .get()
+                    .map(str::to_owned)
+                    .or_else(|| env::var("GIT_SSH_COMMAND").ok());
                 let mut ssh_command = shlex::Shlex::new(ssh_command.as_deref().unwrap_or("ssh"));
                 let mut command = Command::new(
                     ssh_command
@@ -172,12 +180,10 @@ where
     .await
     {
         Some(lines)
-    } else if let Ok(lines) =
-        git::config(current_dir, location, |command| command.arg("lfs.url")).await
-    {
-        Some(lines)
     } else {
-        None
+        git::config(current_dir, location, |command| command.arg("lfs.url"))
+            .await
+            .ok()
     };
 
     if let Some(lines) = lines {

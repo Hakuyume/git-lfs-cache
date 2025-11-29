@@ -52,11 +52,13 @@ async fn test_drop() -> anyhow::Result<()> {
     drop(writer);
     drop(channel);
 
-    anyhow::ensure!(fs::read_dir(temp_dir.path())
-        .await?
-        .next_entry()
-        .await?
-        .is_none());
+    anyhow::ensure!(
+        fs::read_dir(temp_dir.path())
+            .await?
+            .next_entry()
+            .await?
+            .is_none()
+    );
     anyhow::ensure!(body_0.await?.is_err());
     anyhow::ensure!(body_1.await?.is_err());
     anyhow::ensure!(body_2.await?.is_err());
@@ -89,7 +91,7 @@ async fn test_reset() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_large() -> anyhow::Result<()> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let mut body = vec![0; 1 << 24];
     rng.fill(&mut body[..]);
@@ -102,7 +104,7 @@ async fn test_large() -> anyhow::Result<()> {
 
     let mut pos = 0;
     while pos < body.len() {
-        let size = cmp::min(rng.gen_range(1..1 << 16), body.len() - pos);
+        let size = cmp::min(rng.random_range(1..1 << 16), body.len() - pos);
         writer.write(&body[pos..pos + size]).await?;
         pos += size;
     }
