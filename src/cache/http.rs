@@ -1,7 +1,7 @@
 use crate::{channel, git_lfs, misc};
 use futures::{TryFutureExt, TryStreamExt};
 use headers::HeaderMapExt;
-use http::{header, Request, StatusCode};
+use http::{Request, StatusCode, header};
 use http_body::Frame;
 use http_body_util::{BodyExt, Empty, StreamBody};
 use serde::{Deserialize, Serialize};

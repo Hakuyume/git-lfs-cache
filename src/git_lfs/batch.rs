@@ -2,7 +2,7 @@
 
 use super::{Error, Operation};
 use crate::misc;
-use http::{header, HeaderMap};
+use http::{HeaderMap, header};
 use http_body_util::{BodyExt, Full};
 use serde::{Deserialize, Serialize};
 use url::Url;
